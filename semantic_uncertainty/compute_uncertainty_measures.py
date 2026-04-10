@@ -4,7 +4,6 @@ import logging
 import os
 import pickle
 import numpy as np
-import wandb
 
 from analyze_results import analyze_run
 from uncertainty.data.data_utils import load_ds
@@ -39,37 +38,22 @@ def main(args):
     wandb_dir = f'{scratch_dir}/{user}/uncertainty'
     slurm_jobid = os.getenv('SLURM_JOB_ID', None)
     project = "semantic_uncertainty" if not args.debug else "semantic_uncertainty_debug"
-    if args.assign_new_wandb_id:
-        logging.info('Assign new wandb_id.')
-        api = wandb.Api()
-        old_run = api.run(f'{args.restore_entity_eval}/{project}/{args.eval_wandb_runid}')
-        wandb.init(
-            entity=args.entity,
-            project=project,
-            dir=wandb_dir,
-            notes=f'slurm_id: {slurm_jobid}, experiment_lot: {args.experiment_lot}',
-            # For convenience, keep any 'generate_answers' configs from old run,
-            # but overwrite the rest!
-            # NOTE: This means any special configs affecting this script must be
-            # called again when calling this script!
-            config={**old_run.config, **args.__dict__},
-        )
-
-        def restore(filename):
-            old_run.file(filename).download(
-                replace=True, exist_ok=False, root=wandb.run.dir)
-
-            class Restored:
-                name = f'{wandb.run.dir}/{filename}'
-
-            return Restored
-    else:
-        logging.info('Reuse active wandb id.')
-
-        def restore(filename):
-            class Restored:
-                name = f'{wandb.run.dir}/{filename}'
-            return Restored
+    
+    import json
+    out_dir = os.environ.get("SU_LOCAL_RUN_DIR", f"{scratch_dir}/{user}/uncertainty/local_run")
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # if args.assign_new_wandb_id:
+    #     logging.info('Assign new wandb_id.')
+    #     api = wandb.Api()
+    #     old_run = api.run(f'{args.restore_entity_eval}/{project}/{args.eval_wandb_runid}')
+    #     wandb.init(...)
+    
+    # We redefine `restore()` to just fetch from the local output directory directly.
+    def restore(filename):
+        class Restored:
+            name = f'{out_dir}/{filename}'
+        return Restored
 
     if args.train_wandb_runid != args.eval_wandb_runid:
         logging.info(
@@ -77,23 +61,31 @@ def main(args):
             args.train_wandb_runid, args.eval_wandb_runid)
 
         is_ood_eval = True  # pylint: disable=invalid-name
-        api = wandb.Api()
-        old_run_train = api.run(f'{args.restore_entity_train}/semantic_uncertainty/{args.train_wandb_runid}')
-        filename = 'train_generations.pkl'
-        old_run_train.file(filename).download(
-            replace=True, exist_ok=False, root=wandb.run.dir)
-        with open(f'{wandb.run.dir}/{filename}', "rb") as infile:
-            train_generations = pickle.load(infile)
-        wandb.config.update(
-            {"ood_training_set": old_run_train.config['dataset']}, allow_val_change=True)
+        # api = wandb.Api()
+        # old_run_train = api.run(f'{args.restore_entity_train}/semantic_uncertainty/{args.train_wandb_runid}')
+        # filename = 'train_generations.pkl'
+        # old_run_train.file(filename).download(
+        #     replace=True, exist_ok=False, root=wandb.run.dir)
+        try:
+            with open(f'{out_dir}/train_generations.jsonl', 'r') as infile:
+                train_generations = {k: v for line in infile for k, v in json.loads(line).items()}
+        except FileNotFoundError:
+            with open(f'{out_dir}/train_generations.pkl', "rb") as infile:
+                train_generations = pickle.load(infile)
+        # wandb.config.update(
+        #     {"ood_training_set": old_run_train.config['dataset']}, allow_val_change=True)
     else:
         is_ood_eval = False  # pylint: disable=invalid-name
         if args.compute_p_ik or args.compute_p_ik_answerable:
             train_generations_pickle = restore('train_generations.pkl')
-            with open(train_generations_pickle.name, 'rb') as infile:
-                train_generations = pickle.load(infile)
+            try:
+                with open(restore('train_generations.jsonl').name, 'r') as infile:
+                    train_generations = {k: v for line in infile for k, v in json.loads(line).items()}
+            except FileNotFoundError:
+                with open(train_generations_pickle.name, 'rb') as infile:
+                    train_generations = pickle.load(infile)
 
-    wandb.config.update({"is_ood_eval": is_ood_eval}, allow_val_change=True)
+    # wandb.config.update({"is_ood_eval": is_ood_eval}, allow_val_change=True)
 
     # Load entailment model.
     if args.compute_predictive_entropy:
@@ -147,9 +139,9 @@ def main(args):
             num_generations=num_gen,
             metric=utils.get_metric(old_exp['args'].metric))
         del p_true_responses
-        wandb.config.update(
-            {'p_true_num_fewshot': len_p_true}, allow_val_change=True)
-        wandb.log(dict(len_p_true=len_p_true))
+        # wandb.config.update(
+        #     {'p_true_num_fewshot': len_p_true}, allow_val_change=True)
+        # wandb.log(dict(len_p_true=len_p_true))
 
         logging.info('Generated few-shot prompt for p_true.')
         logging.info(80*'#')
@@ -168,8 +160,12 @@ def main(args):
     result_dict['semantic_ids'] = []
 
     validation_generations_pickle = restore('validation_generations.pkl')
-    with open(validation_generations_pickle.name, 'rb') as infile:
-        validation_generations = pickle.load(infile)
+    try:
+        with open(restore('validation_generations.jsonl').name, 'r') as infile:
+            validation_generations = {k: v for line in infile for k, v in json.loads(line).items()}
+    except FileNotFoundError:
+        with open(validation_generations_pickle.name, 'rb') as infile:
+            validation_generations = pickle.load(infile)
 
     entropies = defaultdict(list)
     validation_embeddings, validation_is_true, validation_answerable = [], [], []
@@ -180,109 +176,115 @@ def main(args):
         return len(generation['reference']['answers']['text']) > 0
 
     # Loop over datapoints and compute validation embeddings and entropies.
-    for idx, tid in enumerate(validation_generations):
+    with open(f'{out_dir}/uncertainty_measures.jsonl', 'w') as f:
+        for idx, tid in enumerate(validation_generations):
 
-        example = validation_generations[tid]
-        question = example['question']
-        context = example['context']
-        full_responses = example["responses"]
-        most_likely_answer = example['most_likely_answer']
+            example = validation_generations[tid]
+            question = example['question']
+            context = example['context']
+            full_responses = example["responses"]
+            most_likely_answer = example['most_likely_answer']
 
-        if not args.use_all_generations:
-            if args.use_num_generations == -1:
-                raise ValueError
-            responses = [fr[0] for fr in full_responses[:args.use_num_generations]]
-        else:
-            responses = [fr[0] for fr in full_responses]
-
-        if args.recompute_accuracy:
-            logging.info('Recomputing accuracy!')
-            if is_answerable(example):
-                acc = metric(most_likely_answer['response'], example, None)
-            else:
-                acc = 0.0  # pylint: disable=invalid-name
-            validation_is_true.append(acc)
-            logging.info('Recomputed accuracy!')
-
-        else:
-            validation_is_true.append(most_likely_answer['accuracy'])
-
-        validation_answerable.append(is_answerable(example))
-        validation_embeddings.append(most_likely_answer['embedding'])
-        logging.info('validation_is_true: %f', validation_is_true[-1])
-
-        if args.compute_predictive_entropy:
-            # Token log likelihoods. Shape = (n_sample, n_tokens)
             if not args.use_all_generations:
-                log_liks = [r[1] for r in full_responses[:args.use_num_generations]]
+                if args.use_num_generations == -1:
+                    raise ValueError
+                responses = [fr[0] for fr in full_responses[:args.use_num_generations]]
             else:
-                log_liks = [r[1] for r in full_responses]
+                responses = [fr[0] for fr in full_responses]
 
-            for i in log_liks:
-                assert i
+            if args.recompute_accuracy:
+                logging.info('Recomputing accuracy!')
+                if is_answerable(example):
+                    acc = metric(most_likely_answer['response'], example, None)
+                else:
+                    acc = 0.0  # pylint: disable=invalid-name
+                validation_is_true.append(acc)
+                logging.info('Recomputed accuracy!')
 
-            if args.compute_context_entails_response:
-                # Compute context entails answer baseline.
-                entropies['context_entails_response'].append(context_entails_response(
-                    context, responses, entailment_model))
+            else:
+                validation_is_true.append(most_likely_answer['accuracy'])
 
-            if args.condition_on_question and args.entailment_model == 'deberta':
-                responses = [f'{question} {r}' for r in responses]
+            validation_answerable.append(is_answerable(example))
+            validation_embeddings.append(most_likely_answer['embedding'])
+            logging.info('validation_is_true: %f', validation_is_true[-1])
 
-            # Compute semantic ids.
-            semantic_ids = get_semantic_ids(
-                responses, model=entailment_model,
-                strict_entailment=args.strict_entailment, example=example)
+            if args.compute_predictive_entropy:
+                # Token log likelihoods. Shape = (n_sample, n_tokens)
+                if not args.use_all_generations:
+                    log_liks = [r[1] for r in full_responses[:args.use_num_generations]]
+                else:
+                    log_liks = [r[1] for r in full_responses]
 
-            result_dict['semantic_ids'].append(semantic_ids)
+                for i in log_liks:
+                    assert i
 
-            # Compute entropy from frequencies of cluster assignments.
-            entropies['cluster_assignment_entropy'].append(cluster_assignment_entropy(semantic_ids))
+                if args.compute_context_entails_response:
+                    # Compute context entails answer baseline.
+                    entropies['context_entails_response'].append(context_entails_response(
+                        context, responses, entailment_model))
 
-            # Length normalization of generation probabilities.
-            log_liks_agg = [np.mean(log_lik) for log_lik in log_liks]
+                if args.condition_on_question and args.entailment_model == 'deberta':
+                    responses = [f'{question} {r}' for r in responses]
 
-            # Compute naive entropy.
-            entropies['regular_entropy'].append(predictive_entropy(log_liks_agg))
+                # Compute semantic ids.
+                semantic_ids = get_semantic_ids(
+                    responses, model=entailment_model,
+                    strict_entailment=args.strict_entailment, example=example)
 
-            # Compute semantic entropy.
-            log_likelihood_per_semantic_id = logsumexp_by_id(semantic_ids, log_liks_agg, agg='sum_normalized')
-            pe = predictive_entropy_rao(log_likelihood_per_semantic_id)
-            entropies['semantic_entropy'].append(pe)
+                result_dict['semantic_ids'].append(semantic_ids)
 
-            # pylint: disable=invalid-name
-            log_str = 'semantic_ids: %s, avg_token_log_likelihoods: %s, entropies: %s'
-            entropies_fmt = ', '.join([f'{i}:{j[-1]:.2f}' for i, j in entropies.items()])
-            # pylint: enable=invalid-name
-            logging.info(80*'#')
-            logging.info('NEW ITEM %d at id=`%s`.', idx, tid)
-            logging.info('Context:')
-            logging.info(example['context'])
-            logging.info('Question:')
-            logging.info(question)
-            logging.info('True Answers:')
-            logging.info(example['reference'])
-            logging.info('Low Temperature Generation:')
-            logging.info(most_likely_answer['response'])
-            logging.info('Low Temperature Generation Accuracy:')
-            logging.info(most_likely_answer['accuracy'])
-            logging.info('High Temp Generation:')
-            logging.info([r[0] for r in full_responses])
-            logging.info('High Temp Generation:')
-            logging.info(log_str, semantic_ids, log_liks_agg, entropies_fmt)
+                # Compute entropy from frequencies of cluster assignments.
+                entropies['cluster_assignment_entropy'].append(cluster_assignment_entropy(semantic_ids))
 
-        if args.compute_p_true_in_compute_stage:
-            p_true = p_true_utils.calculate_p_true(
-                pt_model, question, most_likely_answer['response'],
-                responses, p_true_few_shot_prompt,
-                hint=old_exp['args'].p_true_hint)
-            p_trues.append(p_true)
-            logging.info('p_true: %s', np.exp(p_true))
+                # Length normalization of generation probabilities.
+                log_liks_agg = [np.mean(log_lik) for log_lik in log_liks]
 
-        count += 1
-        if count >= args.num_eval_samples:
-            logging.info('Breaking out of main loop.')
-            break
+                # Compute naive entropy.
+                entropies['regular_entropy'].append(predictive_entropy(log_liks_agg))
+
+                # Compute semantic entropy.
+                log_likelihood_per_semantic_id = logsumexp_by_id(semantic_ids, log_liks_agg, agg='sum_normalized')
+                pe = predictive_entropy_rao(log_likelihood_per_semantic_id)
+                entropies['semantic_entropy'].append(pe)
+
+                # pylint: disable=invalid-name
+                log_str = 'semantic_ids: %s, avg_token_log_likelihoods: %s, entropies: %s'
+                entropies_fmt = ', '.join([f'{i}:{j[-1]:.2f}' for i, j in entropies.items()])
+                # pylint: enable=invalid-name
+                logging.info(80*'#')
+                logging.info('NEW ITEM %d at id=`%s`.', idx, tid)
+                logging.info('Context:')
+                logging.info(example['context'])
+                logging.info('Question:')
+                logging.info(question)
+                logging.info('True Answers:')
+                logging.info(example['reference'])
+                logging.info('Low Temperature Generation:')
+                logging.info(most_likely_answer['response'])
+                logging.info('Low Temperature Generation Accuracy:')
+                logging.info(most_likely_answer['accuracy'])
+                logging.info('High Temp Generation:')
+                logging.info([r[0] for r in full_responses])
+                logging.info('High Temp Generation:')
+                logging.info(log_str, semantic_ids, log_liks_agg, entropies_fmt)
+
+            if args.compute_p_true_in_compute_stage:
+                p_true = p_true_utils.calculate_p_true(
+                    pt_model, question, most_likely_answer['response'],
+                    responses, p_true_few_shot_prompt,
+                    hint=old_exp['args'].p_true_hint)
+                p_trues.append(p_true)
+                logging.info('p_true: %s', np.exp(p_true))
+
+            out_metrics = {k: v[-1] for k, v in entropies.items()} if entropies else {}
+            f.write(json.dumps({tid: out_metrics}) + "\n")
+            f.flush()
+
+            count += 1
+            if count >= args.num_eval_samples:
+                logging.info('Breaking out of main loop.')
+                break
+
 
     logging.info('Accuracy on original task: %f', np.mean(validation_is_true))
     validation_is_false = [1.0 - is_t for is_t in validation_is_true]
@@ -339,7 +341,7 @@ def main(args):
         # Follow up with computation of aggregate performance metrics.
         logging.info(50 * '#X')
         logging.info('STARTING `analyze_run`!')
-        analyze_run(wandb.run.id)
+        analyze_run('local')
         logging.info(50 * '#X')
         logging.info('FINISHED `analyze_run`!')
 

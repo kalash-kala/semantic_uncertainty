@@ -7,7 +7,6 @@ from tqdm import tqdm
 
 import numpy as np
 import torch
-import wandb
 
 from uncertainty.data.data_utils import load_ds
 from uncertainty.utils import utils
@@ -17,6 +16,10 @@ from compute_uncertainty_measures import main as main_compute
 
 utils.setup_logger()
 
+# Example command qwen + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_qwen_triviaqa.log 2>&1 &
+# Example command llama + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_llama_triviaqa.log 2>&1 &
+# Example command Gemma + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_gemma_triviaqa.log 2>&1 &
+# Example command mistral + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_mistral_triviaqa.log 2>&1 &
 
 def main(args):
 
@@ -38,14 +41,10 @@ def main(args):
     if not os.path.exists(f"{scratch_dir}/{user}/uncertainty"):
         os.makedirs(f"{scratch_dir}/{user}/uncertainty")
 
-    wandb.init(
-        entity=args.entity,
-        project="semantic_uncertainty" if not args.debug else "semantic_uncertainty_debug",
-        dir=f"{scratch_dir}/{user}/uncertainty",
-        config=args,
-        notes=f'slurm_id: {slurm_jobid}, experiment_lot: {args.experiment_lot}',
-    )
-    logging.info('Finished wandb init.')
+    import json
+    out_dir = f"{scratch_dir}/{user}/uncertainty/local_run"
+    os.makedirs(out_dir, exist_ok=True)
+    os.environ["SU_LOCAL_RUN_DIR"] = out_dir
 
     # Get accuracy metric.
     metric = utils.get_metric(args.metric)
@@ -101,9 +100,6 @@ def main(args):
             brief_always=args.brief_always and args.enable_brief,
             make_prompt=make_prompt, num_generations=args.num_generations,
             metric=metric)
-        wandb.config.update(
-            {'p_true_num_fewshot': len_p_true}, allow_val_change=True)
-        wandb.log(dict(len_p_true=len_p_true))
         experiment_details['p_true_indices'] = p_true_indices
         experiment_details['p_true_responses'] = p_true_responses
         experiment_details['p_true_few_shot_prompt'] = p_true_few_shot_prompt
@@ -123,6 +119,9 @@ def main(args):
 
         # This will store all input data and model predictions.
         accuracies, generations, results_dict, p_trues = [], {}, {}, []
+
+        jsonl_path = os.path.join(out_dir, f"{dataset_split}_generations.jsonl")
+        jsonl_file = open(jsonl_path, 'w')
 
         if dataset_split == 'train':
             if not args.get_training_set_generations:
@@ -163,10 +162,8 @@ def main(args):
 
             full_responses = []
 
-            # We sample one low temperature answer on which we will compute the
-            # accuracy and args.num_generation high temperature answers which will
-            # be used to estimate the entropy variants.
-
+            # We sample one low-temperature answer for accuracy using greedy decoding
+            # and args.num_generations high-temperature sampled answers for entropy.
             if dataset_split == 'train' and args.get_training_set_generations_most_likely_only:
                 num_generations = 1
             else:
@@ -174,11 +171,16 @@ def main(args):
 
             for i in range(num_generations):
 
-                # Temperature for first generation is always `0.1`.
-                temperature = 0.1 if i == 0 else args.temperature
+                # First generation is greedy low-temperature decoding.
+                if i == 0:
+                    temperature = 0.0
+                    do_sample = False
+                else:
+                    temperature = 1.0
+                    do_sample = True
 
                 predicted_answer, token_log_likelihoods, embedding = model.predict(
-                    local_prompt, temperature)
+                    local_prompt, temperature=temperature, do_sample=do_sample)
                 embedding = embedding.cpu() if embedding is not None else None
 
                 # Only compute accuracy if question is answerable.
@@ -216,6 +218,21 @@ def main(args):
             # Append all predictions for this example to `generations`.
             generations[example['id']]['responses'] = full_responses
 
+            sample_data = generations[example['id']]
+            if sample_data['most_likely_answer'].get('embedding') is not None:
+                if hasattr(sample_data['most_likely_answer']['embedding'], "tolist"):
+                    sample_data['most_likely_answer']['embedding'] = sample_data['most_likely_answer']['embedding'].tolist()
+            
+            clean_responses = []
+            for r in full_responses:
+                ans, likelihoods, emb, acc = r
+                emb_list = emb.tolist() if hasattr(emb, "tolist") else emb
+                clean_responses.append((ans, likelihoods, emb_list, acc))
+            sample_data['responses'] = clean_responses
+            
+            jsonl_file.write(json.dumps({example['id']: sample_data}) + "\n")
+            jsonl_file.flush()
+
             if args.compute_p_true and dataset_split == 'validation':
                 # Already compute p_true here. Avoid cost of generations in compute_uncertainty script.
                 p_true = p_true_utils.calculate_p_true(
@@ -225,13 +242,13 @@ def main(args):
                 p_trues.append(p_true)
                 logging.info('p_true: %s', p_true)
 
+        jsonl_file.close()
         # Save generations for that split.
         utils.save(generations, f'{dataset_split}_generations.pkl')
 
         # Log overall accuracy.
         accuracy = np.mean(accuracies)
         print(f"Overall {dataset_split} split accuracy: {accuracy}")
-        wandb.log({f"{dataset_split}_accuracy": accuracy})
 
         if dataset_split == 'validation':
             if args.compute_p_true:
@@ -255,20 +272,16 @@ if __name__ == '__main__':
     if unknown:
         raise ValueError(f'Unkown args: {unknown}')
 
-    if args.compute_uncertainties:
-        args.assign_new_wandb_id = False
-
     # First sample generations from LLM.
     logging.info('STARTING `generate_answers`!')
     main(args)
     logging.info('FINISHED `generate_answers`!')
 
-    if args.compute_uncertainties:
-        # Follow with uncertainty calculation script by default.
-        args.assign_new_wandb_id = False
-        gc.collect()
-        torch.cuda.empty_cache()
-        logging.info(50 * '#X')
-        logging.info('STARTING `compute_uncertainty_measures`!')
-        main_compute(args)
-        logging.info('FINISHED `compute_uncertainty_measures`!')
+    # if args.compute_uncertainties:
+    #     # Follow with uncertainty calculation script by default.
+    #     gc.collect()
+    #     torch.cuda.empty_cache()
+    #     logging.info(50 * '#X')
+    #     logging.info('STARTING `compute_uncertainty_measures`!')
+    #     main_compute(args)
+    #     logging.info('FINISHED `compute_uncertainty_measures`!')
