@@ -1,5 +1,6 @@
 """Data Loading Utilities."""
 import os
+import re
 import json
 import hashlib
 import datasets
@@ -10,6 +11,9 @@ def load_ds(dataset_name, seed, add_options=None):
     user = os.environ['USER']
 
     train_dataset, validation_dataset = None, None
+
+    md5hash = lambda s: str(int(hashlib.md5(s.encode('utf-8')).hexdigest(), 16))
+
     if dataset_name == "squad":
         dataset = datasets.load_dataset("squad_v2")
         train_dataset = dataset["train"]
@@ -21,9 +25,13 @@ def load_ds(dataset_name, seed, add_options=None):
         validation_dataset = dataset["test"]
 
         reformat = lambda x: {
-            'question': x['Question'], 'context': x['Body'], 'type': x['Type'],
-            'equation': x['Equation'], 'id': x['ID'],
-            'answers': {'text': [str(x['Answer'])]}}
+            'question': x['Question'],
+            'context': x['Body'],
+            'type': x['Type'],
+            'equation': x['Equation'],
+            'id': x['ID'],
+            'answers': {'text': [str(x['Answer'])]}
+        }
 
         train_dataset = [reformat(d) for d in train_dataset]
         validation_dataset = [reformat(d) for d in validation_dataset]
@@ -32,10 +40,9 @@ def load_ds(dataset_name, seed, add_options=None):
         dataset = datasets.load_dataset("nq_open")
         train_dataset = dataset["train"]
         validation_dataset = dataset["validation"]
-        md5hash = lambda s: str(int(hashlib.md5(s.encode('utf-8')).hexdigest(), 16))
 
         reformat = lambda x: {
-            'question': x['question']+'?',
+            'question': x['question'] + '?',
             'answers': {'text': x['answer']},
             'context': '',
             'id': md5hash(str(x['question'])),
@@ -98,6 +105,62 @@ def load_ds(dataset_name, seed, add_options=None):
         dataset = dataset.train_test_split(test_size=0.8, seed=seed)
         train_dataset = dataset['train']
         validation_dataset = dataset['test']
+
+    elif dataset_name == "gsm8k":
+        # HF dataset: openai/gsm8k, config "main"
+        # Splits: train, test
+        dataset = datasets.load_dataset("openai/gsm8k", "main")
+        train_dataset = dataset["train"]
+        validation_dataset = dataset["test"]
+
+        def extract_final_answer(answer_text):
+            # GSM8K answers are usually of the form "... #### 72"
+            if "####" in answer_text:
+                return answer_text.split("####")[-1].strip()
+
+            # Fallback: pick last number if delimiter is missing
+            matches = re.findall(r"[-+]?\d[\d,]*\.?\d*", answer_text)
+            return matches[-1].replace(",", "") if matches else answer_text.strip()
+
+        def reformat(x):
+            return {
+                'question': x['question'],
+                'context': '',
+                'id': md5hash(str(x['question'])),
+                'answers': {'text': [extract_final_answer(x['answer'])]},
+            }
+
+        train_dataset = [reformat(d) for d in train_dataset]
+        validation_dataset = [reformat(d) for d in validation_dataset]
+
+    elif dataset_name == "sciq":
+        # HF dataset: allenai/sciq, default config
+        # Splits: train, validation, test
+        dataset = datasets.load_dataset("allenai/sciq")
+        train_dataset = dataset["train"]
+        validation_dataset = dataset["validation"]
+
+        def reformat(x):
+            item = {
+                'question': x['question'],
+                'context': x.get('support', ''),
+                'id': md5hash(str(x['question'])),
+                'answers': {'text': [x['correct_answer']]},
+            }
+
+            # Optional: include answer choices if needed elsewhere
+            if add_options:
+                item['options'] = [
+                    x['correct_answer'],
+                    x['distractor1'],
+                    x['distractor2'],
+                    x['distractor3'],
+                ]
+
+            return item
+
+        train_dataset = [reformat(d) for d in train_dataset]
+        validation_dataset = [reformat(d) for d in validation_dataset]
 
     else:
         raise ValueError

@@ -296,6 +296,10 @@ class HuggingfaceModel(BaseModel):
             stopping_criteria=stopping_criteria,
             pad_token_id=pad_token_id,
         )
+
+        if 'gemma-3' in self.model_name.lower():
+            generate_kwargs['min_new_tokens'] = 1
+
         if do_sample:
             generate_kwargs['temperature'] = temperature
 
@@ -345,67 +349,115 @@ class HuggingfaceModel(BaseModel):
         sliced_answer = sliced_answer.strip()
 
         # Get the number of tokens until the stop word comes up.
-        # Note: Indexing with `stop_at` already excludes the stop_token.
-        # Note: It's important we do this with full answer, since there might be
-        # non-trivial interactions between the input_data and generated part
-        # in tokenization (particularly around whitespaces.)
-        token_stop_index = self.tokenizer(full_answer[:input_data_offset + stop_at], return_tensors="pt")['input_ids'].shape[1]
-        n_input_token = len(inputs['input_ids'][0])
-        n_generated = token_stop_index - n_input_token
+        # Get token counts / hidden states / likelihoods.
+        # For Gemma-3, avoid re-tokenizing decoded text to infer n_generated,
+        # because that bookkeeping is what is mismatching.
+        if 'gemma-3' in mn_lower:
+            # Count actual generated steps directly from generation outputs.
+            n_generated = len(outputs.scores) if outputs.scores is not None else answer_tokens.shape[0]
 
-        if n_generated == 0:
-            logging.warning('Only stop_words were generated. For likelihoods and embeddings, taking stop word instead.')
-            n_generated = 1
+            transition_scores = self.model.compute_transition_scores(
+                outputs.sequences, outputs.scores, normalize_logits=True
+            )
+            log_likelihoods = [score.item() for score in transition_scores[0]]
 
-        # Get the last hidden state (last layer) and the last token's embedding of the answer.
-        if 'decoder_hidden_states' in outputs.keys():
-            hidden = outputs.decoder_hidden_states
-        else:
-            hidden = outputs.hidden_states
+            if len(log_likelihoods) == 0:
+                logging.warning('Gemma returned no transition scores.')
+                return sliced_answer, [-1e9], None
 
-        if len(hidden) == 1:
-            logging.warning(
-                'Taking first and only generation for hidden! '
-                'n_generated: %d, n_input_token: %d, token_stop_index %d, '
-                'last_token: %s, generation was: %s',
-                n_generated, n_input_token, token_stop_index,
-                self.tokenizer.decode(outputs['sequences'][0][-1]),
-                full_answer,
-                )
-            last_input = hidden[0]
-        elif ((n_generated - 1) >= len(hidden)):
-            logging.error(
-                'Taking last state because n_generated is too large'
-                'n_generated: %d, n_input_token: %d, token_stop_index %d, '
-                'last_token: %s, generation was: %s, slice_answer: %s',
-                n_generated, n_input_token, token_stop_index,
-                self.tokenizer.decode(outputs['sequences'][0][-1]),
-                full_answer, sliced_answer
-                )
-            last_input = hidden[-1]
-        else:
-            last_input = hidden[n_generated - 1]
-
-        last_layer = last_input[-1]
-        last_token_embedding = last_layer[:, -1, :].cpu()
-
-        transition_scores = self.model.compute_transition_scores(
-            outputs.sequences, outputs.scores, normalize_logits=True)
-
-        log_likelihoods = [score.item() for score in transition_scores[0]]
-        if len(log_likelihoods) == 1:
-            logging.warning('Taking first and only generation for log likelihood!')
-            log_likelihoods = log_likelihoods
-        else:
+            # Keep counts aligned with actual returned scores.
+            n_generated = min(n_generated, len(log_likelihoods))
             log_likelihoods = log_likelihoods[:n_generated]
 
-        if len(log_likelihoods) == self.max_new_tokens:
-            logging.warning('Generation interrupted by max_token limit.')
+            if len(log_likelihoods) == self.max_new_tokens:
+                logging.warning('Generation interrupted by max_token limit.')
 
-        if len(log_likelihoods) == 0:
-            raise ValueError
+            if 'decoder_hidden_states' in outputs.keys():
+                hidden = outputs.decoder_hidden_states
+            else:
+                hidden = outputs.hidden_states
 
-        return sliced_answer, log_likelihoods, last_token_embedding
+            # Hidden states may still be missing even when text + scores are present.
+            if hidden is None or len(hidden) == 0:
+                logging.warning('Gemma returned empty hidden states; using valid log-likelihoods and no embedding.')
+                return sliced_answer, log_likelihoods, None
+
+            n_hidden_steps = min(n_generated, len(hidden))
+            if n_hidden_steps <= 0:
+                logging.warning('Gemma had no usable hidden-state steps; using valid log-likelihoods and no embedding.')
+                return sliced_answer, log_likelihoods, None
+
+            last_input = hidden[n_hidden_steps - 1]
+            last_layer = last_input[-1]
+            last_token_embedding = last_layer[:, -1, :].cpu()
+
+            # Keep likelihoods aligned with the step used for embedding.
+            log_likelihoods = log_likelihoods[:n_hidden_steps]
+
+            return sliced_answer, log_likelihoods, last_token_embedding
+
+        else:
+            # Existing logic for models that are already working fine.
+            token_stop_index = self.tokenizer(
+                full_answer[:input_data_offset + stop_at],
+                return_tensors="pt"
+            )['input_ids'].shape[1]
+            n_input_token = len(inputs['input_ids'][0])
+            n_generated = token_stop_index - n_input_token
+
+            if 'decoder_hidden_states' in outputs.keys():
+                hidden = outputs.decoder_hidden_states
+            else:
+                hidden = outputs.hidden_states
+
+            if n_generated <= 0 or hidden is None or len(hidden) == 0:
+                logging.warning("Zero-token generation or empty hidden states.")
+                return sliced_answer, [-1e9], None
+
+            if len(hidden) == 1:
+                logging.warning(
+                    'Taking first and only generation for hidden! '
+                    'n_generated: %d, n_input_token: %d, token_stop_index %d, '
+                    'last_token: %s, generation was: %s',
+                    n_generated, n_input_token, token_stop_index,
+                    self.tokenizer.decode(outputs['sequences'][0][-1]),
+                    full_answer,
+                )
+                last_input = hidden[0]
+            elif ((n_generated - 1) >= len(hidden)):
+                logging.error(
+                    'Taking last state because n_generated is too large'
+                    'n_generated: %d, n_input_token: %d, token_stop_index %d, '
+                    'last_token: %s, generation was: %s, slice_answer: %s',
+                    n_generated, n_input_token, token_stop_index,
+                    self.tokenizer.decode(outputs['sequences'][0][-1]),
+                    full_answer, sliced_answer
+                )
+                last_input = hidden[-1]
+            else:
+                last_input = hidden[n_generated - 1]
+
+            last_layer = last_input[-1]
+            last_token_embedding = last_layer[:, -1, :].cpu()
+
+            transition_scores = self.model.compute_transition_scores(
+                outputs.sequences, outputs.scores, normalize_logits=True
+            )
+
+            log_likelihoods = [score.item() for score in transition_scores[0]]
+            if len(log_likelihoods) == 1:
+                logging.warning('Taking first and only generation for log likelihood!')
+                log_likelihoods = log_likelihoods
+            else:
+                log_likelihoods = log_likelihoods[:n_generated]
+
+            if len(log_likelihoods) == self.max_new_tokens:
+                logging.warning('Generation interrupted by max_token limit.')
+
+            if len(log_likelihoods) == 0:
+                raise ValueError
+
+            return sliced_answer, log_likelihoods, last_token_embedding
 
     def get_p_true(self, input_data):
         """Get the probability of the model anwering A (True) for the given input."""

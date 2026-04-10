@@ -277,11 +277,11 @@ if __name__ == '__main__':
     main(args)
     logging.info('FINISHED `generate_answers`!')
 
-    # if args.compute_uncertainties:
-    #     # Follow with uncertainty calculation script by default.
-    #     gc.collect()
-    #     torch.cuda.empty_cache()
-    #     logging.info(50 * '#X')
-    #     logging.info('STARTING `compute_uncertainty_measures`!')
-    #     main_compute(args)
-    #     logging.info('FINISHED `compute_uncertainty_measures`!')
+    if args.compute_uncertainties:
+        # Follow with uncertainty calculation script by default.
+        gc.collect()
+        torch.cuda.empty_cache()
+        logging.info(50 * '#X')
+        logging.info('STARTING `compute_uncertainty_measures`!')
+        main_compute(args)
+        logging.info('FINISHED `compute_uncertainty_measures`!')
