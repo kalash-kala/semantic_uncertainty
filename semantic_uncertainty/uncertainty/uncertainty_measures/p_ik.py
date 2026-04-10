@@ -1,7 +1,8 @@
 """Predict model correctness from linear classifier."""
+import json
 import logging
+import os
 import torch
-import wandb
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
@@ -15,6 +16,7 @@ def get_p_ik(train_embeddings, is_false, eval_embeddings=None, eval_is_false=Non
     logging.info('Accuracy of model on Task: %f.', 1 - torch.tensor(is_false).mean())  # pylint: disable=no-member
 
     # Convert the list of tensors to a 2D tensor.
+    train_embeddings = [torch.tensor(e) for e in train_embeddings] if isinstance(train_embeddings[0], list) else train_embeddings
     train_embeddings_tensor = torch.cat(train_embeddings, dim=0)  # pylint: disable=no-member
     # Convert the tensor to a numpy array.
     embeddings_array = train_embeddings_tensor.cpu().numpy()
@@ -28,6 +30,7 @@ def get_p_ik(train_embeddings, is_false, eval_embeddings=None, eval_is_false=Non
     model.fit(X_train, y_train)
 
     # Predict deterministically and probabilistically and compute accuracy and auroc for all splits.
+    eval_embeddings = [torch.tensor(e) for e in eval_embeddings] if eval_embeddings and isinstance(eval_embeddings[0], list) else eval_embeddings
     X_eval = torch.cat(eval_embeddings, dim=0).cpu().numpy()  # pylint: disable=no-member,invalid-name
     y_eval = eval_is_false
 
@@ -45,8 +48,8 @@ def get_p_ik(train_embeddings, is_false, eval_embeddings=None, eval_is_false=Non
             model = LogisticRegression()
             model.fit(embeddings_array, is_false)
             convergence = {
-                'n_iter': model.n_iter_[0],
-                'converged': (model.n_iter_ < model.max_iter)[0]}
+                'n_iter': int(model.n_iter_[0]),
+                'converged': bool((model.n_iter_ < model.max_iter)[0])}
 
         y_pred = model.predict(X)
         y_pred_proba = model.predict_proba(X)
@@ -59,7 +62,10 @@ def get_p_ik(train_embeddings, is_false, eval_embeddings=None, eval_is_false=Non
         metrics.update(split_metrics)
 
     logging.info('Metrics for p_ik classifier: %s.', metrics)
-    wandb.log({**metrics, **convergence})
+    out_dir = os.environ.get('SU_LOCAL_RUN_DIR', './root/uncertainty/local_run')
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, 'p_ik_metrics.jsonl'), 'w') as f:
+        f.write(json.dumps({**metrics, **convergence}) + '\n')
 
     # Return model predictions on the eval set.
     return y_preds_proba['eval'][:, 1]

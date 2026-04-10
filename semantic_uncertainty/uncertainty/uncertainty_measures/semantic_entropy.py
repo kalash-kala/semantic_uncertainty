@@ -4,7 +4,6 @@ import pickle
 import logging
 
 import numpy as np
-import wandb
 import torch
 import torch.nn.functional as F
 
@@ -60,12 +59,9 @@ class EntailmentLLM(BaseEntailment):
 
         logging.info('Restoring prediction cache from %s', entailment_cache_id)
 
-        api = wandb.Api()
-        run = api.run(entailment_cache_id)
-        run.file(self.entailment_file).download(
-            replace=True, exist_ok=False, root=wandb.run.dir)
-
-        with open(f'{wandb.run.dir}/{self.entailment_file}', "rb") as infile:
+        out_dir = os.environ.get('SU_LOCAL_RUN_DIR', './root/uncertainty/local_run')
+        cache_path = os.path.join(out_dir, self.entailment_file)
+        with open(cache_path, 'rb') as infile:
             return pickle.load(infile)
 
     def save_prediction_cache(self):
