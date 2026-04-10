@@ -274,7 +274,7 @@ def get_reference(example):
 
 def init_model(args):
     mn = args.model_name
-    if 'llama' in mn.lower() or 'falcon' in mn or 'mistral' in mn.lower():
+    if 'llama' in mn.lower() or 'falcon' in mn or 'mistral' in mn.lower() or 'qwen' in mn.lower() or 'gemma' in mn.lower():
         model = HuggingfaceModel(
             mn, stop_sequences='default',
             max_new_tokens=args.model_max_new_tokens)
@@ -337,6 +337,11 @@ def get_metric(metric):
 
 
 def save(object, file):
-    with open(f'{wandb.run.dir}/{file}', 'wb') as f:
+    import os
+    out_dir = os.environ.get("SU_LOCAL_RUN_DIR", ".")
+    os.makedirs(out_dir, exist_ok=True)
+    # with open(f'{wandb.run.dir}/{file}', 'wb') as f:
+    #     pickle.dump(object, f)
+    # wandb.save(f'{wandb.run.dir}/{file}')
+    with open(f'{out_dir}/{file}', 'wb') as f:
         pickle.dump(object, f)
-    wandb.save(f'{wandb.run.dir}/{file}')

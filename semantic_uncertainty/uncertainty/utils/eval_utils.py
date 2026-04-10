@@ -13,9 +13,9 @@ def bootstrap(function, rng, n_resamples=1000):
             (data, ), function, n_resamples=n_resamples, confidence_level=0.9,
             random_state=rng)
         return {
-            'std_err': bs.standard_error,
-            'low': bs.confidence_interval.low,
-            'high': bs.confidence_interval.high
+            'std_err': float(bs.standard_error),
+            'low': float(bs.confidence_interval.low),
+            'high': float(bs.confidence_interval.high)
         }
     return inner
 
