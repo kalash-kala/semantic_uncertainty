@@ -35,9 +35,9 @@ utils.setup_logger()
 # Example command mistral + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
 
 # Example command gemma + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_gemma_triviaqa_combined.log 2>&1 &
-# Example command Llama + trivia_qa + CUDA_VISIBLE_DEVICES=2: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
-# Example command mistral + trivia_qa + CUDA_VISIBLE_DEVICES=3: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
-# Example command Qwen + trivia_qa + CUDA_VISIBLE_DEVICES=4: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
+# Example command Llama + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
+# Example command mistral + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
+# Example command Qwen + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 10000 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
 
 def _build_eval_pool(
     target_train_dataset,
@@ -100,15 +100,14 @@ def main(args):
     random.seed(args.random_seed)
     np.random.seed(args.random_seed)
 
-    user = os.environ['USER']
-    scratch_dir = os.getenv('SCRATCH_DIR', '.')
-    if not os.path.exists(f"{scratch_dir}/{user}/uncertainty"):
-        os.makedirs(f"{scratch_dir}/{user}/uncertainty")
+    scratch_dir = os.getenv('SCRATCH_DIR', '/data/kalashkala')
+    if not os.path.exists(f"{scratch_dir}/semantic_uncertainty_data/uncertainty"):
+        os.makedirs(f"{scratch_dir}/semantic_uncertainty_data/uncertainty")
 
     safe_model_name = args.model_name.replace('/', '__').replace(' ', '_')
     run_stamp = time.strftime('%Y%m%d_%H%M%S')
     run_tag = f"{args.dataset}__{safe_model_name}__seed{args.random_seed}__pid{os.getpid()}__{run_stamp}"
-    out_dir = os.path.join(f"{scratch_dir}/{user}/uncertainty", run_tag)
+    out_dir = os.path.join(f"{scratch_dir}/semantic_uncertainty_data/uncertainty", run_tag)
     os.makedirs(out_dir, exist_ok=True)
     os.environ['SU_LOCAL_RUN_DIR'] = out_dir
     logging.info('Using run-specific output directory: %s', out_dir)
