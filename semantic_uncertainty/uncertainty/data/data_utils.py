@@ -148,7 +148,6 @@ def load_ds(dataset_name, seed, add_options=None):
                 'answers': {'text': [x['correct_answer']]},
             }
 
-            # Optional: include answer choices if needed elsewhere
             if add_options:
                 item['options'] = [
                     x['correct_answer'],
@@ -161,6 +160,26 @@ def load_ds(dataset_name, seed, add_options=None):
 
         train_dataset = [reformat(d) for d in train_dataset]
         validation_dataset = [reformat(d) for d in validation_dataset]
+
+    elif dataset_name == "math_500":
+        # HF dataset: HuggingFaceH4/MATH-500
+        # Split: test only
+        dataset = datasets.load_dataset("HuggingFaceH4/MATH-500")
+
+        def reformat(x):
+            return {
+                'question': x['problem'],
+                'context': '',
+                'id': x['unique_id'],
+                'answers': {'text': [str(x['answer'])]},
+                'solution': x['solution'],
+                'subject': x['subject'],
+                'level': x['level'],
+            }
+
+        # Evaluation-only dataset
+        train_dataset = []
+        validation_dataset = [reformat(d) for d in dataset["test"]]
 
     else:
         raise ValueError
