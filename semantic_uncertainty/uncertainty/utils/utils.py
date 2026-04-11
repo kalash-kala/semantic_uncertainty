@@ -306,8 +306,6 @@ def get_make_prompt(args):
 def get_metric(metric):
     if metric == 'squad':
 
-        squad_metric = load("squad_v2")
-
         def metric(response, example, *args, **kwargs):
             # Compatibility with recomputation.
             if 'id' in example:
@@ -317,6 +315,9 @@ def get_metric(metric):
             else:
                 raise ValueError
 
+            # Re-load each call to avoid stale .arrow cache file errors
+            # in the evaluate library (FileNotFoundError on .arrow cleanup).
+            squad_metric = load("squad_v2")
             prediction = {'prediction_text': response, 'no_answer_probability': 0.0, 'id': exid}
             results = squad_metric.compute(
                 predictions=[prediction],
