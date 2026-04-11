@@ -56,7 +56,7 @@ def parse_log_metrics(log_file_path, output_path):
                     if j + 1 < len(lines):
                         m_val = re.search(r'INFO\s+(.*)', lines[j + 1].strip())
                         if m_val:
-                            item_data['low_t_generation'] = m_val.group(1).strip()
+                            item_data['low_t_generation'] = m_val.group(1).strip().replace(',', '')
 
                 if 'Low Temperature Generation Accuracy:' in lines[j]:
                     if j + 1 < len(lines):
@@ -75,7 +75,8 @@ def parse_log_metrics(log_file_path, output_path):
                             content = m_val.group(1).strip()
                             if content.startswith("['") or content.startswith('["'):
                                 try:
-                                    item_data['n_generations'] = ast.literal_eval(content)
+                                    parsed = ast.literal_eval(content)
+                                    item_data['n_generations'] = [s.replace(',', '') for s in parsed]
                                 except Exception:
                                     item_data['n_generations'] = content
                             elif content.startswith('semantic_ids:'):
