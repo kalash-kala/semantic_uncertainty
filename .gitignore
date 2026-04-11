@@ -140,3 +140,4 @@ dmypy.json
 *.csv
 *.jsonl
 *.log
+root/
