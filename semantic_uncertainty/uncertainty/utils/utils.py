@@ -3,6 +3,7 @@ import os
 import logging
 import argparse
 import pickle
+import uuid
 
 import wandb
 
@@ -315,9 +316,10 @@ def get_metric(metric):
             else:
                 raise ValueError
 
-            # Re-load each call to avoid stale .arrow cache file errors
-            # in the evaluate library (FileNotFoundError on .arrow cleanup).
-            squad_metric = load("squad_v2")
+            # Re-load each call with a unique experiment_id to avoid race
+            # conditions when multiple SLURM workers share the same cache dir
+            # (evaluate's cleanup does os.remove on a shared .arrow path).
+            squad_metric = load("squad_v2", experiment_id=str(uuid.uuid4()))
             prediction = {'prediction_text': response, 'no_answer_probability': 0.0, 'id': exid}
             results = squad_metric.compute(
                 predictions=[prediction],
