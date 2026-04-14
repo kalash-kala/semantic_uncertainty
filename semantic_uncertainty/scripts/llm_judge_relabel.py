@@ -23,18 +23,48 @@ Usage:
         --output_csv /path/to/detail_svamp__llama_entropy_0.5_relabeled.csv \\
         --model      /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ
 
-    nohup example:
-    nohup python3 llm_judge_relabel.py \\
-        --input_csv  /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5.csv \\
-        --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5_relabeled.csv \\
-        --model      /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ \\
-        > relabel_svamp.log 2>&1 &
+Sample commands for all dataset-model-threshold combos:
+(base dir: /home/kalashkala/Datasets/Semantic-Uncertainty/output)
+
+    # ── SVAMP ─────────────────────────────────────────────────────────────────
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_llama_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_llama_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_gemma_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_gemma_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_mistral_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_mistral_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_qwen_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_qwen_0.3.log 2>&1 &
+
+    # ── SciQ ──────────────────────────────────────────────────────────────────
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_llama_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_llama_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_gemma_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_gemma_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_mistral_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_mistral_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_qwen_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_qwen_0.3.log 2>&1 &
+
+    # ── TriviaQA ──────────────────────────────────────────────────────────────
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_llama_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_llama_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_gemma_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_gemma_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_mistral_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_mistral_0.3.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_qwen_0.5.log 2>&1 &
+    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_qwen_0.3.log 2>&1 &
 """
+
+import os
+# Fix MKL threading conflict with libgomp (vLLM subprocess inspection crashes without this)
+os.environ.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
+os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
 
 import argparse
 import ast
 import json
-import os
 import re
 from pathlib import Path
 
@@ -68,7 +98,7 @@ JUDGE_USER_TEMPLATE = (
 
 def extract_threshold(filename: str) -> float | None:
     """Parse entropy threshold from filename like detail_svamp__llama_entropy_0.5.csv."""
-    m = re.search(r'entropy_([\d.]+)', filename)
+    m = re.search(r'entropy_(\d+(?:\.\d+)?)', filename)
     return float(m.group(1)) if m else None
 
 
@@ -259,11 +289,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Max tokens for judge response (default: 16 — just yes/no)")
     p.add_argument("--tensor_parallel_size", type=int, default=1,
                    help="Number of GPUs for tensor parallelism (default: 1)")
+    p.add_argument("--cuda_device", type=str, default=None,
+                   help="CUDA device index or indices to use (e.g., '0' or '0,1')")
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
+
+    if args.cuda_device is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
 
     input_path = Path(args.input_csv)
     if not input_path.exists():
