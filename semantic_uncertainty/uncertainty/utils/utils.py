@@ -307,6 +307,11 @@ def get_make_prompt(args):
 def get_metric(metric):
     if metric == 'squad':
 
+        # Load once per process — using PID as experiment_id avoids race
+        # conditions when multiple workers share the same cache dir, while
+        # eliminating the per-call reload overhead.
+        _squad_metric = load("squad_v2", experiment_id=f"pid{os.getpid()}")
+
         def metric(response, example, *args, **kwargs):
             # Compatibility with recomputation.
             if 'id' in example:
@@ -316,12 +321,8 @@ def get_metric(metric):
             else:
                 raise ValueError
 
-            # Re-load each call with a unique experiment_id to avoid race
-            # conditions when multiple SLURM workers share the same cache dir
-            # (evaluate's cleanup does os.remove on a shared .arrow path).
-            squad_metric = load("squad_v2", experiment_id=str(uuid.uuid4()))
             prediction = {'prediction_text': response, 'no_answer_probability': 0.0, 'id': exid}
-            results = squad_metric.compute(
+            results = _squad_metric.compute(
                 predictions=[prediction],
                 references=[get_reference(example)])
             return 1.0 if (results['f1'] >= 50.0) else 0.0
