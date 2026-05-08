@@ -232,6 +232,11 @@ class HuggingfaceModel(BaseModel):
             raise ValueError
 
         self.model_name = model_name
+        # Left-padding is required for batched generation so all sequences
+        # end at the same position and generation alignment is correct.
+        self.tokenizer.padding_side = 'left'
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
         self.stop_sequences = stop_sequences + [self.tokenizer.eos_token]
         
         try:
@@ -286,6 +291,20 @@ class HuggingfaceModel(BaseModel):
             stopping_criteria = None
 
         logging.debug('temperature: %f | do_sample: %s', temperature, do_sample)
+
+        # Get prompt embedding (last token of input)
+        with torch.no_grad():
+            prompt_outputs = self.model(
+                input_ids=inputs['input_ids'],
+                attention_mask=inputs.get('attention_mask', None),
+                output_hidden_states=True,
+            )
+        if 'decoder_hidden_states' in prompt_outputs.keys():
+            prompt_hidden = prompt_outputs.decoder_hidden_states
+        else:
+            prompt_hidden = prompt_outputs.hidden_states
+        prompt_last_token_embedding = prompt_hidden[-1][0, -1, :].cpu() if prompt_hidden else None
+
         generate_kwargs = dict(
             **inputs,
             max_new_tokens=self.max_new_tokens,
@@ -363,7 +382,7 @@ class HuggingfaceModel(BaseModel):
 
             if len(log_likelihoods) == 0:
                 logging.warning('Gemma returned no transition scores.')
-                return sliced_answer, [-1e9], None
+                return sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}
 
             # Keep counts aligned with actual returned scores.
             n_generated = min(n_generated, len(log_likelihoods))
@@ -380,21 +399,30 @@ class HuggingfaceModel(BaseModel):
             # Hidden states may still be missing even when text + scores are present.
             if hidden is None or len(hidden) == 0:
                 logging.warning('Gemma returned empty hidden states; using valid log-likelihoods and no embedding.')
-                return sliced_answer, log_likelihoods, None
+                return sliced_answer, log_likelihoods, {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}
 
             n_hidden_steps = min(n_generated, len(hidden))
             if n_hidden_steps <= 0:
                 logging.warning('Gemma had no usable hidden-state steps; using valid log-likelihoods and no embedding.')
-                return sliced_answer, log_likelihoods, None
+                return sliced_answer, log_likelihoods, {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}
 
             last_input = hidden[n_hidden_steps - 1]
             last_layer = last_input[-1]
-            last_token_embedding = last_layer[:, -1, :].cpu()
+            last_token_emb = last_layer[:, -1, :].cpu()
+
+            # Extract first answer embedding (first generated token)
+            first_answer_emb = hidden[0][-1][0, -1, :].cpu() if hidden else None
 
             # Keep likelihoods aligned with the step used for embedding.
             log_likelihoods = log_likelihoods[:n_hidden_steps]
 
-            return sliced_answer, log_likelihoods, last_token_embedding
+            embeddings_dict = {
+                'first_answer': first_answer_emb,
+                'last_prompt': prompt_last_token_embedding,
+                'last_token': last_token_emb
+            }
+
+            return sliced_answer, log_likelihoods, embeddings_dict
 
         else:
             # Existing logic for models that are already working fine.
@@ -412,7 +440,7 @@ class HuggingfaceModel(BaseModel):
 
             if n_generated <= 0 or hidden is None or len(hidden) == 0:
                 logging.warning("Zero-token generation or empty hidden states.")
-                return sliced_answer, [-1e9], None
+                return sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}
 
             if len(hidden) == 1:
                 logging.warning(
@@ -438,7 +466,10 @@ class HuggingfaceModel(BaseModel):
                 last_input = hidden[n_generated - 1]
 
             last_layer = last_input[-1]
-            last_token_embedding = last_layer[:, -1, :].cpu()
+            last_token_emb = last_layer[:, -1, :].cpu()
+
+            # Extract first answer embedding (first generated token)
+            first_answer_emb = hidden[0][-1][0, -1, :].cpu() if hidden else None
 
             transition_scores = self.model.compute_transition_scores(
                 outputs.sequences, outputs.scores, normalize_logits=True
@@ -457,7 +488,571 @@ class HuggingfaceModel(BaseModel):
             if len(log_likelihoods) == 0:
                 raise ValueError
 
-            return sliced_answer, log_likelihoods, last_token_embedding
+            embeddings_dict = {
+                'first_answer': first_answer_emb,
+                'last_prompt': prompt_last_token_embedding,
+                'last_token': last_token_emb
+            }
+
+            return sliced_answer, log_likelihoods, embeddings_dict
+
+    def predict_batch_questions(self, prompts, temperature, do_sample, num_return_sequences=1,
+                                return_token_ids=False):
+        """Generate answers for a batch of B different prompts.
+
+        When num_return_sequences=1 (greedy or single sample):
+            returns list of B (answer, log_likelihoods, embedding_or_token_info) tuples.
+        When num_return_sequences=N (combined A+B):
+            returns list of B lists, each containing N (answer, log_likelihoods, ...) tuples.
+            HF output ordering: [q0_s0..q0_s(N-1), q1_s0..q1_s(N-1), ..., q(B-1)_s(N-1)].
+
+        When return_token_ids=True, the embedding slot is replaced by a dict:
+            {'generated_ids': list[int], 'prompt_ids': list[int] or None}
+        This skips hidden-state extraction during generation (saves GPU memory),
+        allowing embeddings to be recomputed later via extract_embeddings_batch().
+
+        Stop words are stripped post-hoc (stopping criteria skipped to avoid
+        one sequence halting the whole batch).
+        """
+        mn_lower = self.model_name.lower()
+        B = len(prompts)
+
+        if hasattr(self, 'processor') and 'gemma-3' in mn_lower:
+            # Gemma-3: apply_chat_template per prompt then left-pad manually.
+            token_lists = []
+            for prompt in prompts:
+                if isinstance(prompt, str) and '-it' in mn_lower:
+                    messages = [{"role": "user", "content": [{"type": "text", "text": prompt}]}]
+                    tok = self.processor.apply_chat_template(
+                        messages, add_generation_prompt=True, tokenize=True,
+                        return_dict=True, return_tensors="pt")
+                elif not isinstance(prompt, str):
+                    tok = self.processor.apply_chat_template(
+                        prompt, add_generation_prompt=True, tokenize=True,
+                        return_dict=True, return_tensors="pt")
+                else:
+                    tok = self.processor(text=prompt, return_tensors="pt")
+                token_lists.append(tok['input_ids'][0])
+
+            max_len = max(t.shape[0] for t in token_lists)
+            pad_id = self.tokenizer.pad_token_id
+            padded = torch.stack([
+                torch.cat([torch.full((max_len - t.shape[0],), pad_id, dtype=torch.long), t])
+                for t in token_lists
+            ])
+            attn_mask = (padded != pad_id).long()
+            inputs = {
+                'input_ids': padded.to(self.model.device),
+                'attention_mask': attn_mask.to(self.model.device),
+            }
+            inputs = {k: (v.to(torch.bfloat16) if torch.is_floating_point(v) else v)
+                      for k, v in inputs.items()}
+        elif hasattr(self, 'processor'):
+            inputs = self.processor(text=prompts, return_tensors="pt", padding=True).to(self.model.device)
+        else:
+            inputs = self.tokenizer(prompts, return_tensors="pt", padding=True).to("cuda")
+
+        if 'llama' in mn_lower or 'falcon' in mn_lower or 'mistral' in mn_lower or 'qwen' in mn_lower or 'gemma' in mn_lower:
+            if 'token_type_ids' in inputs:
+                del inputs['token_type_ids']
+            pad_token_id = getattr(self.tokenizer, 'pad_token_id', None) or self.tokenizer.eos_token_id
+        else:
+            pad_token_id = None
+
+        # With left-padding, all sequences in the batch share the same padded
+        # input length. Generated tokens always start at index max_input_len.
+        # (real_input_lens are the unpadded lengths, but are NOT the right offset
+        # to use when slicing outputs.sequences — that must be max_input_len.)
+        max_input_len = inputs['input_ids'].shape[1]  # same for all sequences after padding
+
+        if return_token_ids:
+            # Skip the prompt embedding forward pass — embeddings will be extracted
+            # later via extract_embeddings_batch() using the stored token IDs.
+            prompt_last_token_embeddings = None
+        else:
+            # Get prompt embeddings (last token of input) for all sequences
+            with torch.no_grad():
+                prompt_outputs = self.model(
+                    input_ids=inputs['input_ids'],
+                    attention_mask=inputs.get('attention_mask', None),
+                    output_hidden_states=True,
+                )
+            if 'decoder_hidden_states' in prompt_outputs.keys():
+                prompt_hidden = prompt_outputs.decoder_hidden_states
+            else:
+                prompt_hidden = prompt_outputs.hidden_states
+            # prompt_hidden[-1] is last layer, shape [B, max_input_len, hidden_dim]
+            prompt_last_token_embeddings = prompt_hidden[-1][:, -1, :].cpu() if prompt_hidden else None
+
+        generate_kwargs = dict(
+            **inputs,
+            max_new_tokens=self.max_new_tokens,
+            return_dict_in_generate=True,
+            output_scores=True,
+            output_hidden_states=not return_token_ids,  # skip hidden states when saving token IDs
+            do_sample=do_sample,
+            num_return_sequences=num_return_sequences,
+            pad_token_id=pad_token_id,
+        )
+        if 'gemma-3' in mn_lower:
+            generate_kwargs['min_new_tokens'] = 1
+        if do_sample:
+            generate_kwargs['temperature'] = temperature
+
+        with torch.no_grad():
+            outputs = self.model.generate(**generate_kwargs)
+
+        if len(outputs.sequences[0]) > self.token_limit:
+            raise ValueError(
+                'Generation exceeding token limit %d > %d',
+                len(outputs.sequences[0]), self.token_limit)
+
+        # outputs.sequences.shape = [B*N, max_input_len + max_new_tokens]
+        # Sequence index for question i, sample j = i*N + j
+        N = num_return_sequences
+
+        transition_scores = self.model.compute_transition_scores(
+            outputs.sequences, outputs.scores, normalize_logits=True)
+
+        # --- Early return: token IDs instead of hidden-state embeddings ---
+        if return_token_ids:
+            def _extract_ids(seq_idx):
+                answer_tokens = outputs.sequences[seq_idx][max_input_len:]
+                answer = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+                stop_at = len(answer)
+                if self.stop_sequences is not None:
+                    for stop in self.stop_sequences:
+                        idx = answer.find(stop)
+                        if idx != -1 and idx < stop_at:
+                            stop_at = idx
+                sliced_answer = answer[:stop_at].strip()
+                n_gen = len(answer_tokens)
+                if stop_at < len(answer) and n_gen > 0:
+                    try:
+                        n_gen = min(
+                            self.tokenizer(answer[:stop_at], return_tensors='pt')['input_ids'].shape[1],
+                            n_gen)
+                    except Exception:
+                        pass
+                lls = [s.item() for s in transition_scores[seq_idx]]
+                if n_gen > 0:
+                    lls = lls[:n_gen]
+                if not lls:
+                    lls = [-100.0]
+                if len(lls) == self.max_new_tokens:
+                    logging.warning('Generation interrupted by max_token limit.')
+                generated_ids = answer_tokens[:max(n_gen, 0)].cpu().tolist()
+                return sliced_answer, lls, generated_ids
+
+            results = []
+            for i in range(B):
+                attn = inputs.get('attention_mask', None)
+                if attn is not None:
+                    actual_prompt_ids = inputs['input_ids'][i][attn[i].bool()].cpu().tolist()
+                else:
+                    actual_prompt_ids = inputs['input_ids'][i][
+                        inputs['input_ids'][i] != (pad_token_id or self.tokenizer.eos_token_id)
+                    ].cpu().tolist()
+
+                if N == 1:
+                    ans, lls, gen_ids = _extract_ids(i)
+                    results.append((ans, lls, {'generated_ids': gen_ids, 'prompt_ids': actual_prompt_ids}))
+                else:
+                    samples = []
+                    for j in range(N):
+                        ans, lls, gen_ids = _extract_ids(i * N + j)
+                        samples.append((ans, lls, {
+                            'generated_ids': gen_ids,
+                            'prompt_ids': actual_prompt_ids if j == 0 else None,
+                        }))
+                    results.append(samples)
+            return results
+        # --- End token ID early return ---
+
+        if 'decoder_hidden_states' in outputs.keys():
+            hidden = outputs.decoder_hidden_states
+        else:
+            hidden = outputs.hidden_states
+
+        def _extract(seq_idx, prompt_idx):
+            """Extract (answer, log_likelihoods, embeddings_dict) for one sequence.
+
+            All sequences share the same max_input_len due to left-padding.
+            Generated tokens start at index max_input_len in outputs.sequences.
+
+            Returns embeddings as a dict with keys: 'first_answer', 'last_prompt', 'last_token'.
+            """
+            # Generated tokens always start at max_input_len (the padded input length),
+            # NOT at real_input_len. Using real_input_len would include the tail of the
+            # prompt (the un-padded portion) in the "answer", producing garbage outputs.
+            answer_tokens = outputs.sequences[seq_idx][max_input_len:]
+            answer = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+
+            # Find earliest stop sequence.
+            stop_at = len(answer)
+            if self.stop_sequences is not None:
+                for stop in self.stop_sequences:
+                    idx = answer.find(stop)
+                    if idx != -1 and idx < stop_at:
+                        stop_at = idx
+            sliced_answer = answer[:stop_at].strip()
+
+            # n_gen: number of generated tokens, capped at stop position.
+            # outputs.scores has one entry per generated step; its length equals
+            # the number of tokens actually generated across the batch.
+            n_gen_total = len(answer_tokens)  # tokens the model actually generated
+            if 'gemma-3' in mn_lower:
+                n_gen_total = len(outputs.scores) if outputs.scores is not None else n_gen_total
+
+            if stop_at < len(answer) and n_gen_total > 0:
+                try:
+                    tokens_to_stop = self.tokenizer(answer[:stop_at], return_tensors='pt')['input_ids'].shape[1]
+                    n_gen = min(tokens_to_stop, n_gen_total)
+                except Exception:
+                    n_gen = n_gen_total
+            else:
+                n_gen = n_gen_total
+
+            if n_gen <= 0 and sliced_answer:
+                n_gen = 1
+
+            log_likelihoods = [s.item() for s in transition_scores[seq_idx]]
+            if len(log_likelihoods) == 0:
+                logging.warning('No transition scores for seq %d.', seq_idx)
+                return sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': None, 'last_token': None}
+
+            if n_gen > 0:
+                log_likelihoods = log_likelihoods[:n_gen]
+
+            if len(log_likelihoods) == self.max_new_tokens:
+                logging.warning('Generation interrupted by max_token limit.')
+
+            if n_gen <= 0 or hidden is None or len(hidden) == 0:
+                logging.warning('Zero-token generation or empty hidden states for seq %d.', seq_idx)
+                return sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': None, 'last_token': None}
+
+            # Extract last_token embedding
+            if len(hidden) == 1:
+                last_input = hidden[0]
+            elif n_gen - 1 >= len(hidden):
+                logging.error('n_gen too large for seq %d: %d >= %d', seq_idx, n_gen - 1, len(hidden))
+                last_input = hidden[-1]
+            else:
+                last_input = hidden[n_gen - 1]
+
+            last_token_emb = last_input[-1][seq_idx, -1, :].cpu()
+
+            # Extract first_answer embedding (first generated token)
+            first_answer_emb = hidden[0][-1][seq_idx, -1, :].cpu() if hidden else None
+
+            # Extract last_prompt embedding from prompt_hidden
+            last_prompt_emb = prompt_last_token_embeddings[prompt_idx] if prompt_last_token_embeddings is not None else None
+
+            embeddings_dict = {
+                'first_answer': first_answer_emb,
+                'last_prompt': last_prompt_emb,
+                'last_token': last_token_emb
+            }
+
+            return sliced_answer, log_likelihoods, embeddings_dict
+
+        results = []
+        for i in range(B):
+            if N == 1:
+                results.append(_extract(i, i))
+            else:
+                samples = [_extract(i * N + j, i) for j in range(N)]
+                results.append(samples)
+
+        return results
+
+    def extract_embeddings_batch(self, sequence_infos):
+        """Extract embeddings for a batch of (prompt, generated) sequences.
+
+        sequence_infos: list of {'prompt_ids': list[int], 'generated_ids': list[int]}
+
+        Each entry runs a single forward pass (no generation) over the full
+        sequence (prompt + generated tokens) and returns the hidden states at
+        the three positions used downstream:
+          - last_prompt : last prompt token (just before generation)
+          - first_answer: first generated token
+          - last_token  : last generated token
+
+        Returns: list of {'first_answer': Tensor, 'last_prompt': Tensor, 'last_token': Tensor}
+        """
+        mn_lower = self.model_name.lower()
+        pad_id = (getattr(self.tokenizer, 'pad_token_id', None) or self.tokenizer.eos_token_id)
+
+        # Build full sequences (prompt + generated) and track boundary positions.
+        full_seqs = []
+        prompt_lens = []
+        gen_lens = []
+        for info in sequence_infos:
+            p_ids = info.get('prompt_ids') or []
+            g_ids = info.get('generated_ids') or []
+            full_seqs.append(torch.tensor(p_ids + g_ids, dtype=torch.long))
+            prompt_lens.append(len(p_ids))
+            gen_lens.append(len(g_ids))
+
+        max_len = max(s.shape[0] for s in full_seqs) if full_seqs else 1
+        padded = torch.stack([
+            torch.cat([torch.full((max_len - s.shape[0],), pad_id, dtype=torch.long), s])
+            for s in full_seqs
+        ])
+        attn_mask = (padded != pad_id).long()
+
+        device = next(self.model.parameters()).device
+        padded = padded.to(device)
+        attn_mask = attn_mask.to(device)
+        if hasattr(self, 'processor') and 'gemma-3' in mn_lower:
+            padded = padded.to(torch.bfloat16) if torch.is_floating_point(padded) else padded
+
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=padded,
+                attention_mask=attn_mask,
+                output_hidden_states=True,
+            )
+
+        if 'decoder_hidden_states' in outputs.keys():
+            last_hidden = outputs.decoder_hidden_states[-1]   # [B, max_len, hidden_dim]
+        else:
+            last_hidden = outputs.hidden_states[-1]
+
+        results = []
+        for i, (p_len, g_len) in enumerate(zip(prompt_lens, gen_lens)):
+            pad_len = max_len - p_len - g_len
+            last_prompt_pos = pad_len + p_len - 1
+
+            last_prompt_emb = last_hidden[i, last_prompt_pos, :].cpu() if p_len > 0 else None
+
+            if g_len > 0:
+                first_answer_emb = last_hidden[i, pad_len + p_len, :].cpu()
+                last_token_emb = last_hidden[i, pad_len + p_len + g_len - 1, :].cpu()
+            else:
+                first_answer_emb = None
+                last_token_emb = None
+
+            results.append({
+                'first_answer': first_answer_emb,
+                'last_prompt': last_prompt_emb,
+                'last_token': last_token_emb,
+            })
+
+        # Free GPU tensors immediately to keep memory pressure low.
+        del outputs, last_hidden, padded, attn_mask
+        return results
+
+    def predict_batch_samples(self, input_data, temperature, num_return_sequences):
+        """Generate num_return_sequences high-temperature samples in one forward pass.
+
+        Stopping criteria are skipped (stopping on seq[0] would truncate all others);
+        stop words are stripped post-hoc from each decoded answer.
+
+        Returns a list of (answer, token_log_likelihoods, embedding) of length
+        num_return_sequences, matching the per-item format of predict().
+        """
+        mn_lower = self.model_name.lower()
+
+        if hasattr(self, 'processor') and 'gemma-3' in mn_lower:
+            if isinstance(input_data, str) and '-it' in mn_lower:
+                messages = [
+                    {"role": "user", "content": [{"type": "text", "text": input_data}]}
+                ]
+                inputs = self.processor.apply_chat_template(
+                    messages, add_generation_prompt=True, tokenize=True,
+                    return_dict=True, return_tensors="pt"
+                )
+            elif not isinstance(input_data, str):
+                inputs = self.processor.apply_chat_template(
+                    input_data, add_generation_prompt=True, tokenize=True,
+                    return_dict=True, return_tensors="pt"
+                )
+            else:
+                inputs = self.processor(text=input_data, return_tensors="pt")
+            inputs = {k: (v.to(torch.bfloat16) if torch.is_floating_point(v) else v)
+                      for k, v in inputs.items()}
+            inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        elif hasattr(self, 'processor'):
+            inputs = self.processor(text=input_data, return_tensors="pt").to(self.model.device)
+        else:
+            inputs = self.tokenizer(input_data, return_tensors="pt").to("cuda")
+
+        if 'llama' in mn_lower or 'falcon' in mn_lower or 'mistral' in mn_lower or 'qwen' in mn_lower or 'gemma' in mn_lower:
+            if 'token_type_ids' in inputs:
+                del inputs['token_type_ids']
+            pad_token_id = getattr(self.tokenizer, 'pad_token_id', None) or self.tokenizer.eos_token_id
+        else:
+            pad_token_id = None
+
+        # Get prompt embedding (last token of input)
+        with torch.no_grad():
+            prompt_outputs = self.model(
+                input_ids=inputs['input_ids'],
+                attention_mask=inputs.get('attention_mask', None),
+                output_hidden_states=True,
+            )
+        if 'decoder_hidden_states' in prompt_outputs.keys():
+            prompt_hidden = prompt_outputs.decoder_hidden_states
+        else:
+            prompt_hidden = prompt_outputs.hidden_states
+        prompt_last_token_embedding = prompt_hidden[-1][0, -1, :].cpu() if prompt_hidden else None
+
+        generate_kwargs = dict(
+            **inputs,
+            max_new_tokens=self.max_new_tokens,
+            return_dict_in_generate=True,
+            output_scores=True,
+            output_hidden_states=True,
+            do_sample=True,
+            temperature=temperature,
+            num_return_sequences=num_return_sequences,
+            pad_token_id=pad_token_id,
+        )
+        if 'gemma-3' in mn_lower:
+            generate_kwargs['min_new_tokens'] = 1
+
+        with torch.no_grad():
+            outputs = self.model.generate(**generate_kwargs)
+
+        if len(outputs.sequences[0]) > self.token_limit:
+            raise ValueError(
+                'Generation exceeding token limit %d > %d',
+                len(outputs.sequences[0]), self.token_limit)
+
+        n_input_tokens = inputs['input_ids'].shape[1]
+
+        transition_scores = self.model.compute_transition_scores(
+            outputs.sequences, outputs.scores, normalize_logits=True)
+
+        if 'decoder_hidden_states' in outputs.keys():
+            hidden = outputs.decoder_hidden_states
+        else:
+            hidden = outputs.hidden_states
+
+        results = []
+
+        if 'gemma-3' in mn_lower:
+            n_generated = len(outputs.scores) if outputs.scores is not None else (
+                outputs.sequences.shape[1] - n_input_tokens)
+
+            for i in range(num_return_sequences):
+                answer_tokens = outputs.sequences[i][n_input_tokens:]
+                answer = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+                sliced_answer = answer
+                if self.stop_sequences is not None:
+                    stop_idx = len(answer)
+                    for stop in self.stop_sequences:
+                        idx = answer.find(stop)
+                        if idx != -1 and idx < stop_idx:
+                            stop_idx = idx
+                    sliced_answer = answer[:stop_idx]
+                sliced_answer = sliced_answer.strip()
+
+                log_likelihoods = [score.item() for score in transition_scores[i]]
+                if len(log_likelihoods) == 0:
+                    logging.warning('Gemma returned no transition scores for seq %d.', i)
+                    results.append((sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}))
+                    continue
+
+                n_gen_i = min(n_generated, len(log_likelihoods))
+                log_likelihoods = log_likelihoods[:n_gen_i]
+
+                if len(log_likelihoods) == self.max_new_tokens:
+                    logging.warning('Generation interrupted by max_token limit.')
+
+                if hidden is None or len(hidden) == 0:
+                    results.append((sliced_answer, log_likelihoods, {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}))
+                    continue
+
+                n_hidden_steps = min(n_gen_i, len(hidden))
+                if n_hidden_steps <= 0:
+                    results.append((sliced_answer, log_likelihoods, {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}))
+                    continue
+
+                last_layer = hidden[n_hidden_steps - 1][-1]  # [N, 1, hidden]
+                last_token_emb = last_layer[i, -1, :].cpu()
+                first_answer_emb = hidden[0][-1][i, -1, :].cpu() if hidden else None
+                log_likelihoods = log_likelihoods[:n_hidden_steps]
+                embeddings_dict = {
+                    'first_answer': first_answer_emb,
+                    'last_prompt': prompt_last_token_embedding,
+                    'last_token': last_token_emb
+                }
+                results.append((sliced_answer, log_likelihoods, embeddings_dict))
+
+        else:
+            for i in range(num_return_sequences):
+                full_answer = self.tokenizer.decode(outputs.sequences[i], skip_special_tokens=True)
+                answer_tokens = outputs.sequences[i][n_input_tokens:]
+                answer = self.tokenizer.decode(answer_tokens, skip_special_tokens=True)
+                input_data_offset = len(full_answer) - len(answer)
+
+                stop_at = len(answer)
+                sliced_answer = answer
+                if self.stop_sequences is not None:
+                    for stop in self.stop_sequences:
+                        idx = answer.find(stop)
+                        if idx != -1 and idx < stop_at:
+                            stop_at = idx
+                    sliced_answer = answer[:stop_at]
+                sliced_answer = sliced_answer.strip()
+
+                # Calculate tokens generated: direct token count is more reliable than character offsets
+                n_gen_total = len(outputs.sequences[i]) - n_input_tokens
+
+                # Try to map character-level stop position to token count
+                if stop_at < len(answer) and n_gen_total > 0:
+                    try:
+                        answer_up_to_stop = answer[:stop_at]
+                        tokens_to_stop = self.tokenizer(answer_up_to_stop, return_tensors='pt')['input_ids'].shape[1]
+                        n_gen_i = min(tokens_to_stop, n_gen_total)
+                    except Exception as e:
+                        logging.debug('Error mapping stop position to tokens for seq %d: %s. Using full count.', i, e)
+                        n_gen_i = n_gen_total
+                else:
+                    n_gen_i = n_gen_total
+
+                # Ensure n_gen_i is at least 1 if we have an answer
+                if n_gen_i <= 0 and sliced_answer.strip():
+                    n_gen_i = 1
+
+                if n_gen_i <= 0 or hidden is None or len(hidden) == 0:
+                    logging.debug('Zero-token generation or empty hidden states for seq %d (n_gen_i=%d).',  i, n_gen_i)
+                    results.append((sliced_answer, [-100.0], {'first_answer': None, 'last_prompt': prompt_last_token_embedding, 'last_token': None}))
+                    continue
+
+                if len(hidden) == 1:
+                    last_input = hidden[0]
+                elif n_gen_i - 1 >= len(hidden):
+                    logging.error(
+                        'n_gen_i too large for seq %d: %d >= %d', i, n_gen_i - 1, len(hidden))
+                    last_input = hidden[-1]
+                else:
+                    last_input = hidden[n_gen_i - 1]
+
+                last_layer = last_input[-1]  # [N, seq, hidden]
+                last_token_emb = last_layer[i, -1, :].cpu()
+                first_answer_emb = hidden[0][-1][i, -1, :].cpu() if hidden else None
+
+                log_likelihoods = [score.item() for score in transition_scores[i]]
+                if len(log_likelihoods) > 1:
+                    log_likelihoods = log_likelihoods[:n_gen_i]
+
+                if len(log_likelihoods) == self.max_new_tokens:
+                    logging.warning('Generation interrupted by max_token limit.')
+
+                if len(log_likelihoods) == 0:
+                    raise ValueError(f'Empty log likelihoods for seq {i}.')
+
+                embeddings_dict = {
+                    'first_answer': first_answer_emb,
+                    'last_prompt': prompt_last_token_embedding,
+                    'last_token': last_token_emb
+                }
+                results.append((sliced_answer, log_likelihoods, embeddings_dict))
+
+        return results
 
     def get_p_true(self, input_data):
         """Get the probability of the model anwering A (True) for the given input."""

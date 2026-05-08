@@ -47,11 +47,11 @@ def get_parser(stages=['generate', 'compute']):
         )
         parser.add_argument(
             "--dataset", type=str, default="trivia_qa",
-            choices=['trivia_qa', 'squad', 'bioasq', 'nq', 'svamp', 'sciq'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k'],
             help="Dataset to use")
         parser.add_argument(
             "--ood_train_dataset", type=str, default=None,
-            choices=['trivia_qa', 'squad', 'bioasq', 'nq', 'svamp', 'sciq'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k'],
             help="Dataset to use to assemble few-shot prompt, p_true prompt, and train p_ik.")
         parser.add_argument(
             "--num_samples", type=int, default=400,
@@ -107,6 +107,10 @@ def get_parser(stages=['generate', 'compute']):
             "--answerable_only", default=False,
             action=argparse.BooleanOptionalAction,
             help='Exclude unanswerable questions.')
+        parser.add_argument(
+            "--generation_batch_size", type=int, default=1,
+            help="Number of questions to process in one model.generate() call. "
+                 "Combined with num_return_sequences for A+B batching.")
 
     if 'compute' in stages:
         parser.add_argument('--recompute_accuracy',

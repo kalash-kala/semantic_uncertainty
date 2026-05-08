@@ -6,6 +6,34 @@ import hashlib
 import datasets
 
 
+def _remove_duplicate_questions(dataset):
+    """Remove duplicate examples based on question text, keeping first occurrence.
+
+    Args:
+        dataset: List of examples or HF Dataset with 'question' field
+
+    Returns:
+        List of unique examples (no duplicate questions)
+    """
+    if dataset is None or len(dataset) == 0:
+        return dataset
+
+    # Convert HF Dataset to list if needed
+    if not isinstance(dataset, list):
+        dataset = [d for d in dataset]
+
+    seen_questions = set()
+    unique_dataset = []
+
+    for item in dataset:
+        question_text = item['question'].lower().strip()
+        if question_text not in seen_questions:
+            seen_questions.add(question_text)
+            unique_dataset.append(item)
+
+    return unique_dataset
+
+
 def load_ds(dataset_name, seed, add_options=None):
     """Load dataset."""
     user = os.environ['USER']
@@ -56,6 +84,20 @@ def load_ds(dataset_name, seed, add_options=None):
         dataset = dataset.train_test_split(test_size=0.2, seed=seed)
         train_dataset = dataset['train']
         validation_dataset = dataset['test']
+
+    elif dataset_name == "trivia_qa_nocontext":
+        dataset = datasets.load_dataset("mandarjoshi/trivia_qa", "rc.nocontext")
+
+        def reformat(x):
+            return {
+                'question': x['question'],
+                'context': '',
+                'id': x['question_id'],
+                'answers': {'text': [x['answer']['value']] + x['answer']['aliases']},
+            }
+
+        train_dataset = [reformat(d) for d in dataset["train"]]
+        validation_dataset = [reformat(d) for d in dataset["validation"]]
 
     elif dataset_name == "bioasq":
         # http://participants-area.bioasq.org/datasets/ we are using training 11b
@@ -139,6 +181,7 @@ def load_ds(dataset_name, seed, add_options=None):
         dataset = datasets.load_dataset("allenai/sciq")
         train_dataset = dataset["train"]
         validation_dataset = dataset["validation"]
+        test_dataset = dataset["test"]
 
         def reformat(x):
             item = {
@@ -160,6 +203,9 @@ def load_ds(dataset_name, seed, add_options=None):
 
         train_dataset = [reformat(d) for d in train_dataset]
         validation_dataset = [reformat(d) for d in validation_dataset]
+        test_dataset = [reformat(d) for d in test_dataset]
+
+        validation_dataset += test_dataset
 
     elif dataset_name == "math_500":
         # HF dataset: HuggingFaceH4/MATH-500
@@ -183,5 +229,15 @@ def load_ds(dataset_name, seed, add_options=None):
 
     else:
         raise ValueError
+
+    # Convert HF Datasets to lists if needed
+    if not isinstance(train_dataset, list):
+        train_dataset = [d for d in train_dataset]
+    if not isinstance(validation_dataset, list):
+        validation_dataset = [d for d in validation_dataset]
+
+    # Remove duplicate questions from both splits
+    train_dataset = _remove_duplicate_questions(train_dataset)
+    validation_dataset = _remove_duplicate_questions(validation_dataset)
 
     return train_dataset, validation_dataset

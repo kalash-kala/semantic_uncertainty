@@ -1,4 +1,5 @@
 """Functions for performance evaluation, mainly used in analyze_results.py."""
+import logging
 import numpy as np
 import scipy
 from sklearn import metrics
@@ -21,6 +22,12 @@ def bootstrap(function, rng, n_resamples=1000):
 
 
 def auroc(y_true, y_score):
+    y_score = np.array(y_score, dtype=np.float64)
+    # Replace inf/-inf with finite extremes to avoid sklearn ValueError.
+    # This can happen when entropy computation underflows.
+    if not np.all(np.isfinite(y_score)):
+        logging.warning('auroc: y_score contains non-finite values; clipping to [-1e6, 1e6].')
+        y_score = np.clip(y_score, -1e6, 1e6)
     fpr, tpr, thresholds = metrics.roc_curve(y_true, y_score)
     del thresholds
     return metrics.auc(fpr, tpr)

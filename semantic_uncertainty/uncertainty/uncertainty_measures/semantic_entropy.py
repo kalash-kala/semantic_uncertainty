@@ -4,6 +4,7 @@ import pickle
 import logging
 
 import numpy as np
+from scipy.special import logsumexp as scipy_logsumexp
 import torch
 import torch.nn.functional as F
 
@@ -33,7 +34,8 @@ class EntailmentDeberta(BaseEntailment):
         # The model checks if text1 -> text2, i.e. if text2 follows from text1.
         # check_implication('The weather is good', 'The weather is good and I like you') --> 1
         # check_implication('The weather is good and I like you', 'The weather is good') --> 2
-        outputs = self.model(**inputs)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
         logits = outputs.logits
         # Deberta-mnli returns `neutral` and `entailment` classes at indices 1 and 2.
         largest_index = torch.argmax(F.softmax(logits, dim=1))  # pylint: disable=no-member
@@ -43,6 +45,42 @@ class EntailmentDeberta(BaseEntailment):
             logging.info('Deberta Prediction: %s', prediction)
 
         return prediction
+
+    def check_implication_batch(self, pairs, internal_batch_size=64):
+        """Run entailment inference on a list of (text1, text2) pairs in one batched forward pass.
+
+        Args:
+            pairs: list of (text1, text2) tuples.
+            internal_batch_size: max pairs per GPU forward pass to avoid OOM.
+
+        Returns:
+            list of int predictions (0=contradiction, 1=neutral, 2=entailment), same order as pairs.
+        """
+        if not pairs:
+            return []
+
+        all_predictions = []
+        for chunk_start in range(0, len(pairs), internal_batch_size):
+            chunk = pairs[chunk_start: chunk_start + internal_batch_size]
+            texts1 = [p[0] for p in chunk]
+            texts2 = [p[1] for p in chunk]
+            inputs = self.tokenizer(
+                texts1, texts2,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=512,
+            ).to(DEVICE)
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            preds = torch.argmax(F.softmax(outputs.logits, dim=1), dim=1).cpu().tolist()
+            all_predictions.extend(preds)
+
+        if os.environ.get('DEBERTA_FULL_LOG', False):
+            for (t1, t2), pred in zip(pairs, all_predictions):
+                logging.info('Deberta Batch Input: %s -> %s  Prediction: %s', t1, t2, pred)
+
+        return all_predictions
 
 
 class EntailmentLLM(BaseEntailment):
@@ -165,21 +203,43 @@ def context_entails_response(context, responses, model):
 def get_semantic_ids(strings_list, model, strict_entailment=False, example=None):
     """Group list of predictions into semantic meaning."""
 
-    def are_equivalent(text1, text2):
+    # For DeBERTa, pre-batch all N*(N-1) directed pairs in a single forward pass
+    # instead of one pair at a time. For N=10 responses this reduces ~90 serial
+    # forward passes to a single batched call.
+    if isinstance(model, EntailmentDeberta) and len(strings_list) > 1:
+        n = len(strings_list)
+        all_pairs = []
+        for i in range(n):
+            for j in range(n):
+                if i != j:
+                    all_pairs.append((strings_list[i], strings_list[j]))
 
-        implication_1 = model.check_implication(text1, text2, example=example)
-        implication_2 = model.check_implication(text2, text1, example=example)  # pylint: disable=arguments-out-of-order
-        assert (implication_1 in [0, 1, 2]) and (implication_2 in [0, 1, 2])
+        results = model.check_implication_batch(all_pairs)
+        implication_cache = {pair: result for pair, result in zip(all_pairs, results)}
 
-        if strict_entailment:
-            semantically_equivalent = (implication_1 == 2) and (implication_2 == 2)
-
-        else:
+        def are_equivalent(text1, text2):
+            implication_1 = implication_cache[(text1, text2)]
+            implication_2 = implication_cache[(text2, text1)]
+            assert (implication_1 in [0, 1, 2]) and (implication_2 in [0, 1, 2])
+            if strict_entailment:
+                return (implication_1 == 2) and (implication_2 == 2)
             implications = [implication_1, implication_2]
-            # Check if none of the implications are 0 (contradiction) and not both of them are neutral.
-            semantically_equivalent = (0 not in implications) and ([1, 1] != implications)
+            return (0 not in implications) and ([1, 1] != implications)
+    else:
+        def are_equivalent(text1, text2):
+            implication_1 = model.check_implication(text1, text2, example=example)
+            implication_2 = model.check_implication(text2, text1, example=example)  # pylint: disable=arguments-out-of-order
+            assert (implication_1 in [0, 1, 2]) and (implication_2 in [0, 1, 2])
 
-        return semantically_equivalent
+            if strict_entailment:
+                semantically_equivalent = (implication_1 == 2) and (implication_2 == 2)
+
+            else:
+                implications = [implication_1, implication_2]
+                # Check if none of the implications are 0 (contradiction) and not both of them are neutral.
+                semantically_equivalent = (0 not in implications) and ([1, 1] != implications)
+
+            return semantically_equivalent
 
     # Initialise all ids with -1.
     semantic_set_ids = [-1] * len(strings_list)
@@ -216,9 +276,11 @@ def logsumexp_by_id(semantic_ids, log_likelihoods, agg='sum_normalized'):
         # Gather log likelihoods at these indices.
         id_log_likelihoods = [log_likelihoods[i] for i in id_indices]
         if agg == 'sum_normalized':
-            # log_lik_norm = id_log_likelihoods - np.prod(log_likelihoods)
-            log_lik_norm = id_log_likelihoods - np.log(np.sum(np.exp(log_likelihoods)))
-            logsumexp_value = np.log(np.sum(np.exp(log_lik_norm)))
+            # Use scipy's numerically stable logsumexp to avoid underflow when
+            # log_likelihoods are very negative (e.g. fallback -100.0 values).
+            log_normalizer = scipy_logsumexp(log_likelihoods)
+            log_lik_norm = id_log_likelihoods - log_normalizer
+            logsumexp_value = scipy_logsumexp(log_lik_norm)
         else:
             raise ValueError
         log_likelihood_per_semantic_id.append(logsumexp_value)
