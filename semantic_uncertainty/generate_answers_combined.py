@@ -29,25 +29,182 @@ from compute_uncertainty_measures import main as main_compute
 
 utils.setup_logger()
 
-# Example command qwen + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
-# Example command llama + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
-# Example command Gemma + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_gemma_triviaqa_combined.log 2>&1 &
-# Example command mistral + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
+# Example command qwen + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
+# Example command llama + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
+# Example command Gemma + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_triviaqa_combined.log 2>&1 &
+# Example command mistral + trivia_qa: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
 
-# Example command gemma + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_gemma_triviaqa_combined.log 2>&1 &
-# Example command Llama + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
-# Example command mistral + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
-# Example command Qwen + trivia_qa + CUDA_VISIBLE_DEVICES=1: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface CUDA_VISIBLE_DEVICES=1 python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
+# Example command gemma + trivia_qa + A100 GPU: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_triviaqa_combined.log 2>&1 &
+# Example command Llama + trivia_qa + A100 GPU: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_triviaqa_combined.log 2>&1 &
+# Example command mistral + trivia_qa + A100 GPU: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_triviaqa_combined.log 2>&1 &
+# Example command Qwen + trivia_qa + A100 GPU: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_triviaqa_combined.log 2>&1 &
 
-# Example command qwen + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_qwen_svamp_combined.log 2>&1 &
-# Example command gemma + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_gemma_svamp_combined.log 2>&1 &
-# Example command Llama + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_llama_svamp_combined.log 2>&1 &
-# Example command mistral + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_mistral_svamp_combined.log 2>&1 &
+# Example command qwen + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_svamp_combined.log 2>&1 &
+# Example command gemma + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_svamp_combined.log 2>&1 &
+# Example command Llama + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_svamp_combined.log 2>&1 &
+# Example command mistral + svamp: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset svamp --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_svamp_combined.log 2>&1 &
 
-# Example command qwen + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_qwen_sciq_combined.log 2>&1 &
-# Example command gemma + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_gemma_sciq_combined.log 2>&1 &
-# Example command Llama + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_llama_sciq_combined.log 2>&1 &
-# Example command mistral + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --compute_uncertainties > uncertainty_run_mistral_sciq_combined.log 2>&1 &
+# Example command qwen + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_sciq_combined.log 2>&1 &
+# Example command gemma + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_sciq_combined.log 2>&1 &
+# Example command Llama + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_sciq_combined.log 2>&1 &
+# Example command mistral + sciq: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset sciq --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_sciq_combined.log 2>&1 &
+
+# Example command qwen + gsm8k: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset gsm8k --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_gsm8k_combined.log 2>&1 &
+# Example command gemma + gsm8k: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset gsm8k --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_gsm8k_combined.log 2>&1 &
+# Example command Llama + gsm8k: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset gsm8k --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_gsm8k_combined.log 2>&1 &
+# Example command mistral + gsm8k: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset gsm8k --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_gsm8k_combined.log 2>&1 &
+
+# Example command qwen + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_trivia-qa-nocontext_combined.log 2>&1 &
+# Example command gemma + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_trivia-qa-nocontext_combined.log 2>&1 &
+# Example command Llama + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_trivia-qa-nocontext_combined.log 2>&1 &
+# Example command mistral + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_trivia-qa-nocontext_combined.log 2>&1 &
+
+def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
+    """Read JSONL (with token IDs), extract embeddings in batches, return full generations dict.
+
+    Each JSONL record stores 'generated_ids' (list[int]) instead of float embedding
+    tensors.  This function reconstructs embeddings via a single forward pass per
+    batch and returns a dict compatible with the downstream PKL format.
+    """
+    records = {}
+    with open(jsonl_path) as f:
+        for line in f:
+            records.update(json.loads(line))
+
+    all_ids = list(records.keys())
+    logging.info('Extracting embeddings for %d records (bsz=%d)…', len(all_ids), bsz)
+
+    if not all_ids:
+        logging.error('JSONL file is empty: %s', jsonl_path)
+        raise ValueError(f'JSONL file has no records: {jsonl_path}')
+
+    # Check first sample to see what format we have
+    first_rec = records[all_ids[0]]
+    first_mla = first_rec.get('most_likely_answer', {})
+    has_generated_ids = 'generated_ids' in first_mla
+    has_embedding = 'embedding' in first_mla
+    logging.info('First sample: has_generated_ids=%s, has_embedding=%s', has_generated_ids, has_embedding)
+
+    # Flatten into (record_id, resp_idx, sequence_info).
+    # resp_idx == -1  →  most_likely_answer (greedy)
+    # resp_idx >= 0   →  sampled responses
+    flat = []
+    for eid in all_ids:
+        rec = records[eid]
+        prompt_ids = rec.get('prompt_token_ids') or []
+
+        mla = rec.get('most_likely_answer', {})
+        if 'generated_ids' in mla:
+            flat.append((eid, -1, {'prompt_ids': prompt_ids, 'generated_ids': mla['generated_ids']}))
+        else:
+            flat.append((eid, -1, None))  # old format — embedding already present
+
+        for j, resp in enumerate(rec.get('responses', [])):
+            gen_ids = resp[2] if (isinstance(resp, (list, tuple)) and len(resp) > 2
+                                  and isinstance(resp[2], list)
+                                  and (not resp[2] or isinstance(resp[2][0], int))) else None
+            if gen_ids is not None:
+                flat.append((eid, j, {'prompt_ids': prompt_ids, 'generated_ids': gen_ids}))
+            else:
+                flat.append((eid, j, None))  # old format
+
+    # Batch-extract embeddings only for records that need it.
+    need_extraction = [(eid, ridx, info) for eid, ridx, info in flat if info is not None]
+    emb_map = {}  # (eid, ridx) → embedding dict
+
+    logging.info('Extracting embeddings for %d samples (bsz=%d)…', len(need_extraction), bsz)
+    for batch_start in tqdm(range(0, len(need_extraction), bsz), desc='Extracting embeddings'):
+        batch = need_extraction[batch_start: batch_start + bsz]
+        keys = [(eid, ridx) for eid, ridx, _ in batch]
+        seq_infos = [info for _, _, info in batch]
+        try:
+            embs = model.extract_embeddings_batch(seq_infos)
+            for key, emb in zip(keys, embs):
+                emb_map[key] = emb
+        except RuntimeError as exc:
+            if 'out of memory' in str(exc).lower():
+                logging.warning('OOM during embedding batch at %d. Reducing batch size and retrying…', batch_start)
+                reduced_bsz = max(2, bsz // 2)
+                for sub_start in range(0, len(batch), reduced_bsz):
+                    sub_batch = batch[sub_start: sub_start + reduced_bsz]
+                    sub_keys = keys[sub_start: sub_start + reduced_bsz]
+                    sub_infos = [info for _, _, info in sub_batch]
+                    try:
+                        embs = model.extract_embeddings_batch(sub_infos)
+                        for key, emb in zip(sub_keys, embs):
+                            emb_map[key] = emb
+                    except Exception as sub_exc:
+                        logging.error('Sub-batch extraction failed: %s', sub_exc)
+                        for key in sub_keys:
+                            emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+            else:
+                logging.error('Embedding extraction failed at batch %d: %s', batch_start, exc, exc_info=True)
+                for key in keys:
+                    emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+        except Exception as exc:
+            logging.error('Embedding extraction failed at batch %d: %s', batch_start, exc, exc_info=True)
+            for key in keys:
+                emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+
+    logging.info('Extraction complete: %d embeddings extracted, %d records total',
+                 len(emb_map), len(all_ids))
+
+    # Reconstruct full records with embedding dicts.
+    generations = {}
+    missing_embeddings = []
+
+    for eid in all_ids:
+        rec = dict(records[eid])
+
+        mla = dict(rec.get('most_likely_answer', {}))
+        if (eid, -1) in emb_map:
+            mla.pop('generated_ids', None)
+            mla['embedding'] = emb_map[(eid, -1)]
+        elif 'generated_ids' in mla:
+            # Sample has generated_ids but no extracted embedding — extraction incomplete
+            missing_embeddings.append((eid, -1))
+            # Use None embedding as fallback to avoid downstream KeyError
+            mla.pop('generated_ids', None)
+            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+        rec['most_likely_answer'] = mla
+
+        new_responses = []
+        for j, resp in enumerate(rec.get('responses', [])):
+            resp = list(resp)
+            if (eid, j) in emb_map:
+                resp[2] = emb_map[(eid, j)]  # replace generated_ids with embedding dict
+            elif isinstance(resp[2], list) and (not resp[2] or isinstance(resp[2][0], int)):
+                # Sample has generated_ids but no extracted embedding — extraction incomplete
+                missing_embeddings.append((eid, j))
+                resp[2] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+            new_responses.append(tuple(resp))
+        rec['responses'] = new_responses
+
+        rec.pop('prompt_token_ids', None)
+        generations[eid] = rec
+
+    if missing_embeddings:
+        logging.warning('Embedding extraction incomplete: %d samples missing embeddings. '
+                       'Check logs for extraction errors.', len(missing_embeddings))
+
+    # Validation: ensure all samples have embedding dicts
+    missing_keys = []
+    for eid, rec in generations.items():
+        mla = rec.get('most_likely_answer', {})
+        if 'embedding' not in mla:
+            missing_keys.append(eid)
+            # Add fallback None embedding to avoid downstream KeyError
+            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+            rec['most_likely_answer'] = mla
+
+    if missing_keys:
+        logging.warning('Final fallback: added None embeddings to %d samples with missing embeddings. '
+                       'This usually indicates extraction errors (OOM, crashes, etc.). '
+                       'Downstream analysis will use None for these samples.', len(missing_keys))
+    else:
+        logging.info('Embeddings successfully extracted for all %d samples.', len(generations))
+    return generations
+
 
 def _build_eval_pool(
     target_train_dataset,
@@ -251,138 +408,197 @@ def main(args):
     # Validation-compatible alias for downstream uncertainty script compatibility.
     experiment_details['validation'] = experiment_details['combined']
 
+    # Save early so selected_indices survive a crash and resume can find them.
+    utils.save(experiment_details, 'experiment_details.pkl')
+
     if args.num_samples > len(combined_examples):
         logging.warning(
             'Not enough samples in combined pool. Using all %d samples.',
             len(combined_examples),
         )
 
-    with open(jsonl_path, 'w') as jsonl_file:
-        for it, combined_idx in enumerate(tqdm(selected_indices), start=1):
-            if ((it + 1) % 10) == 0:
+    # --- Resume from a previous incomplete run ---
+    processed_ids = set()
+    jsonl_mode = 'w'
+    resume_dir = getattr(args, 'resume_dir', None)
+    if resume_dir and os.path.exists(resume_dir):
+        import pickle as _pkl
+        resume_details_pkl = os.path.join(resume_dir, 'experiment_details.pkl')
+        resume_jsonl_path = os.path.join(resume_dir, 'combined_generations.jsonl')
+
+        if os.path.exists(resume_details_pkl):
+            with open(resume_details_pkl, 'rb') as _f:
+                _prev = _pkl.load(_f)
+            selected_indices = _prev['combined']['indices']
+            num_selected = len(selected_indices)
+            logging.info('Resume: loaded %d selected_indices from prior run', num_selected)
+
+        if os.path.exists(resume_jsonl_path):
+            with open(resume_jsonl_path) as _f:
+                for _line in _f:
+                    _rec = json.loads(_line)
+                    for _eid, _data in _rec.items():
+                        processed_ids.add(_eid)
+                        accuracies.append(_data.get('most_likely_answer', {}).get('accuracy', 0.0))
+                        if 'p_true' in _data:
+                            p_trues.append(_data['p_true'])
+            logging.info('Resume: %d samples already done, skipping them', len(processed_ids))
+
+        out_dir = resume_dir
+        os.environ['SU_LOCAL_RUN_DIR'] = out_dir
+        jsonl_path = resume_jsonl_path
+        jsonl_mode = 'a'
+
+    # Exclude already-processed samples so we only iterate what remains.
+    if processed_ids:
+        remaining_indices = [
+            i for i in selected_indices
+            if f"{combined_examples[i]['source_split']}::{combined_examples[i]['source_index']}"
+            not in processed_ids
+        ]
+        logging.info('Resume: %d remaining of %d total', len(remaining_indices), num_selected)
+    else:
+        remaining_indices = selected_indices
+
+    bsz = args.generation_batch_size
+
+    with open(jsonl_path, jsonl_mode) as jsonl_file:
+        for batch_start in tqdm(range(0, len(remaining_indices), bsz)):
+            batch_indices = remaining_indices[batch_start: batch_start + bsz]
+            batch_wrapped = [combined_examples[idx] for idx in batch_indices]
+
+            if (batch_start // bsz + 1) % max(1, 10 // bsz) == 0:
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            wrapped_example = combined_examples[combined_idx]
-            example = wrapped_example['example']
-            source_split = wrapped_example['source_split']
-            source_index = wrapped_example['source_index']
+            # Build per-question metadata and prompts.
+            batch_meta = []
+            local_prompts = []
+            for wrapped_example in batch_wrapped:
+                example = wrapped_example['example']
+                source_split = wrapped_example['source_split']
+                source_index = wrapped_example['source_index']
+                question, context = example['question'], example['context']
+                example_id = f"{source_split}::{source_index}"
+                correct_answer = example['answers']['text']
 
-            # question, context = example['question'], example['context']
-            # example_id = f"{source_split}::{example['id']}"
-            # correct_answer = example['answers']['text']
+                generations[example_id] = {
+                    'question': question,
+                    'context': context,
+                    'source_split': source_split,
+                    'source_index': source_index,
+                    'original_id': example['id'],
+                }
 
-            # generations[example_id] = {
-            #     'question': question,
-            #     'context': context,
-            #     'source_split': source_split,
-            #     'source_index': source_index,
-            #     'original_id': example['id'],
-            # }
+                current_input = make_prompt(
+                    context, question, None, BRIEF, args.brief_always and args.enable_brief)
+                local_prompts.append(prompt + current_input)
+                logging.info('Current input: '.ljust(15) + current_input)
 
-            question, context = example['question'], example['context']
-            example_id = f"{source_split}::{source_index}"
-            correct_answer = example['answers']['text']
+                batch_meta.append({
+                    'example': example,
+                    'example_id': example_id,
+                    'question': question,
+                    'context': context,
+                    'source_split': source_split,
+                    'source_index': source_index,
+                    'correct_answer': correct_answer,
+                })
 
-            generations[example_id] = {
-                'question': question,
-                'context': context,
-                'source_split': source_split,
-                'source_index': source_index,
-                'original_id': example['id'],
-            }
+            # Combined A+B: greedy pass for all B questions, then one batched
+            # high-temp call generating num_generations samples per question.
+            # Token IDs are stored instead of hidden-state embeddings to keep the
+            # JSONL tiny; embeddings are extracted in a batched forward pass after
+            # the generation loop via _extract_embeddings_from_token_ids().
+            greedy_results = model.predict_batch_questions(
+                local_prompts, temperature=0.0, do_sample=False, return_token_ids=True)
+            sampled_results = model.predict_batch_questions(
+                local_prompts, temperature=1.0, do_sample=True,
+                num_return_sequences=args.num_generations, return_token_ids=True)
 
-            current_input = make_prompt(
-                context, question, None, BRIEF, args.brief_always and args.enable_brief)
-            local_prompt = prompt + current_input
+            it_base = batch_start + 1
+            for i, meta in enumerate(batch_meta):
+                it = it_base + i
+                example = meta['example']
+                example_id = meta['example_id']
+                question = meta['question']
+                context = meta['context']
+                source_split = meta['source_split']
+                source_index = meta['source_index']
+                correct_answer = meta['correct_answer']
 
-            logging.info('Current input: '.ljust(15) + current_input)
+                predicted_answer, token_log_likelihoods, greedy_token_info = greedy_results[i]
+                # greedy_token_info = {'generated_ids': list[int], 'prompt_ids': list[int]}
 
-            full_responses = []
-            num_generations = args.num_generations + 1  # 1 low-t + N high-t
+                acc = metric(predicted_answer, example, model) if correct_answer else 0.0
 
-            for i in range(num_generations):
-                if i == 0:
-                    temperature = 0.0
-                    do_sample = False
-                else:
-                    temperature = 1.0
-                    do_sample = True
+                logging.info('Iteration ' + str(it) + ':  ' + 80 * '#')
+                if args.use_context:
+                    logging.info('context: '.ljust(15) + str(context))
+                logging.info('source split: '.ljust(15) + source_split)
+                logging.info('source index: '.ljust(15) + str(source_index))
+                logging.info('question: '.ljust(15) + question)
+                logging.info('low-t prediction: '.ljust(15) + predicted_answer)
+                logging.info('correct answer: '.ljust(15) + str(correct_answer))
+                logging.info('accuracy: '.ljust(15) + str(acc))
 
-                predicted_answer, token_log_likelihoods, embedding = model.predict(
-                    local_prompt,
-                    temperature=temperature,
-                    do_sample=do_sample,
-                )
-                embedding = embedding.cpu() if embedding is not None else None
+                accuracies.append(acc)
+                most_likely_answer_dict = {
+                    'response': predicted_answer,
+                    'token_log_likelihoods': token_log_likelihoods,
+                    'generated_ids': greedy_token_info.get('generated_ids', []),
+                    'accuracy': acc,
+                }
+                generations[example_id].update({
+                    'prompt_token_ids': greedy_token_info.get('prompt_ids', []),
+                    'most_likely_answer': most_likely_answer_dict,
+                    'reference': utils.get_reference(example),
+                })
 
-                compute_acc = args.compute_accuracy_at_all_temps or (i == 0)
-                if correct_answer and compute_acc:
-                    acc = metric(predicted_answer, example, model)
-                else:
-                    acc = 0.0
+                full_responses = []
+                for sample_idx, (pred_ans, lls, tok_info) in enumerate(sampled_results[i], start=1):
+                    acc_s = (metric(pred_ans, example, model)
+                             if (correct_answer and args.compute_accuracy_at_all_temps) else 0.0)
+                    logging.info('high-t prediction '.ljust(15) + str(sample_idx) + ' : ' + pred_ans)
+                    gen_ids = tok_info.get('generated_ids', []) if tok_info else []
+                    full_responses.append((pred_ans, lls, gen_ids, acc_s))
 
-                if i == 0:
-                    logging.info('Iteration ' + str(it) + ':  ' + 80 * '#')
-                    if args.use_context:
-                        logging.info('context: '.ljust(15) + str(context))
-                    logging.info('source split: '.ljust(15) + source_split)
-                    logging.info('source index: '.ljust(15) + str(source_index))
-                    logging.info('question: '.ljust(15) + question)
-                    logging.info('low-t prediction: '.ljust(15) + predicted_answer)
-                    logging.info('correct answer: '.ljust(15) + str(correct_answer))
-                    logging.info('accuracy: '.ljust(15) + str(acc))
+                generations[example_id]['responses'] = full_responses
 
-                    accuracies.append(acc)
-                    most_likely_answer_dict = {
-                        'response': predicted_answer,
-                        'token_log_likelihoods': token_log_likelihoods,
-                        'embedding': embedding,
-                        'accuracy': acc,
-                    }
-                    generations[example_id].update({
-                        'most_likely_answer': most_likely_answer_dict,
-                        'reference': utils.get_reference(example),
-                    })
-                else:
-                    logging.info('high-t prediction '.ljust(15) + str(i) + ' : ' + predicted_answer)
-                    full_responses.append((predicted_answer, token_log_likelihoods, embedding, acc))
+                # All fields are now plain Python types (lists of int/float/str) —
+                # no tensor-to-list conversion needed for JSON serialization.
+                sample_data = generations[example_id]
 
-            generations[example_id]['responses'] = full_responses
+                if args.compute_p_true:
+                    p_true = p_true_utils.calculate_p_true(
+                        model,
+                        question,
+                        most_likely_answer_dict['response'],
+                        [r[0] for r in full_responses],
+                        p_true_few_shot_prompt,
+                        hint=args.p_true_hint,
+                    )
+                    p_trues.append(p_true)
+                    logging.info('p_true: %s', p_true)
+                    sample_data['p_true'] = p_true
 
-            sample_data = generations[example_id]
-            if sample_data['most_likely_answer'].get('embedding') is not None:
-                if hasattr(sample_data['most_likely_answer']['embedding'], 'tolist'):
-                    sample_data['most_likely_answer']['embedding'] = (
-                        sample_data['most_likely_answer']['embedding'].tolist())
+                jsonl_file.write(json.dumps({example_id: sample_data}) + '\n')
+                jsonl_file.flush()
+                del generations[example_id]
 
-            clean_responses = []
-            for ans, likelihoods, emb, acc in full_responses:
-                emb_list = emb.tolist() if hasattr(emb, 'tolist') else emb
-                clean_responses.append((ans, likelihoods, emb_list, acc))
-            sample_data['responses'] = clean_responses
-
-            jsonl_file.write(json.dumps({example_id: sample_data}) + '\n')
-            jsonl_file.flush()
-
-            if args.compute_p_true:
-                p_true = p_true_utils.calculate_p_true(
-                    model,
-                    question,
-                    most_likely_answer_dict['response'],
-                    [r[0] for r in full_responses],
-                    p_true_few_shot_prompt,
-                    hint=args.p_true_hint,
-                )
-                p_trues.append(p_true)
-                logging.info('p_true: %s', p_true)
-
+    # Extract embeddings from stored token IDs and build the generations dict.
+    # The JSONL stores token IDs instead of float tensors (much smaller files);
+    # embeddings are computed here in a single batched forward pass per batch.
+    logging.info('Generation loop complete. Extracting embeddings from token IDs…')
+    emb_bsz = 128  # Large batch (no KV cache growth), with auto-retry to smaller sizes on OOM
+    generations = _extract_embeddings_from_token_ids(model, jsonl_path, bsz=emb_bsz)
     utils.save(generations, 'combined_generations.pkl')
 
     # Save validation-compatible copies so the existing uncertainty computation
     # script can run unchanged.
-    validation_jsonl_path = os.path.join(out_dir, 'validation_generations.jsonl')
-    shutil.copyfile(jsonl_path, validation_jsonl_path)
+    # NOTE: Do NOT copy the raw JSONL here — it has 'generated_ids' (token IDs),
+    # not 'embedding' dicts. compute_uncertainty_measures prefers JSONL over PKL,
+    # so we let it fall back to the PKL below which has proper embeddings.
     utils.save(generations, 'validation_generations.pkl')
 
     accuracy = float(np.mean(accuracies)) if accuracies else float('nan')
@@ -402,6 +618,8 @@ def main(args):
 
 if __name__ == '__main__':
     parser = utils.get_parser()
+    parser.add_argument('--resume_dir', type=str, default=None,
+                        help='Path to a previous incomplete run directory to resume from.')
     args, unknown = parser.parse_known_args()
     logging.info('Starting new run with args: %s', args)
 

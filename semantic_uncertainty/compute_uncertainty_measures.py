@@ -205,7 +205,11 @@ def main(args):
                 validation_is_true.append(most_likely_answer['accuracy'])
 
             validation_answerable.append(is_answerable(example))
-            validation_embeddings.append(most_likely_answer['embedding'])
+            # Extract 'last_token' embedding from dict, or use whole dict/tensor if not a dict
+            embedding = most_likely_answer['embedding']
+            if isinstance(embedding, dict):
+                embedding = embedding.get('last_token', embedding.get('last_token'))  # Use last_token embedding
+            validation_embeddings.append(embedding)
             logging.info('validation_is_true: %f', validation_is_true[-1])
 
             if args.compute_predictive_entropy:
@@ -305,7 +309,11 @@ def main(args):
         train_is_true, train_embeddings, train_answerable = [], [], []
         for tid in train_generations:
             most_likely_answer = train_generations[tid]['most_likely_answer']
-            train_embeddings.append(most_likely_answer['embedding'])
+            # Extract 'last_token' embedding from dict, or use whole dict/tensor if not a dict
+            embedding = most_likely_answer['embedding']
+            if isinstance(embedding, dict):
+                embedding = embedding.get('last_token', embedding.get('last_token'))  # Use last_token embedding
+            train_embeddings.append(embedding)
             train_is_true.append(most_likely_answer['accuracy'])
             train_answerable.append(is_answerable(train_generations[tid]))
         train_is_false = [0.0 if is_t else 1.0 for is_t in train_is_true]
