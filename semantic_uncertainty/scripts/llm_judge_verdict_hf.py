@@ -14,7 +14,7 @@ Usage:
     python llm_judge_verdict_hf.py --model /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b --cuda_device 0,1
 
 Nohup Usage:
-    nohup python3 llm_judge_verdict_hf.py --model /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b --cuda_device 0,1 > llm_judge_verdict_hf.log 2>&1 &
+    nohup python3 llm_judge_verdict_hf.py --model /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b --cuda_device 0,1 --batch_size 32 > llm_judge_verdict_gsm8k_hf.log 2>&1 &
 
     Edit FILE_LIST below to specify which CSVs to process.
 """
@@ -36,9 +36,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # ─────────────────────────────────────────────────────────────────────────────
 
 FILE_LIST = [
-    "/home/kalashkala/Datasets/Semantic-Uncertainty/sciq/uncertainty_run_llama_sciq_combined.csv",
-    "/home/kalashkala/Datasets/Semantic-Uncertainty/sciq/uncertainty_run_mistral_sciq_combined.csv",
-    "/home/kalashkala/Datasets/Semantic-Uncertainty/sciq/uncertainty_run_qwen_sciq_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_llama_gsm8k_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_mistral_gsm8k_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_qwen_gsm8k_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_gemma_gsm8k_combined.csv",
+    "/home/kalashkala/semantic_uncertainty/semantic_uncertainty/scripts/uncertainty_run_llama_sciq_combined_empty_verdict.csv"
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +55,7 @@ def get_judge_prompt(dataset: str):
             "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
             "The proposed answer is correct if it conveys the same scientific meaning as any of the valid answers.\n"
             "Focus on the meaning being conveyed, not the surface form — synonyms, paraphrases, and abbreviations are acceptable.\n"
+            "If numeric answer is there in ground truth, focus on the value only — formatting differences such as 5.0 vs 5, $100 vs 100, 1,000 vs 1000 or 4 vs four are the same.\n"
             "A partial or abbreviated answer is acceptable if it unambiguously identifies the correct answer given the question context.\n"
             "There may be multiple valid answers listed — the proposed answer is correct if it matches ANY one of them.\n"
             "Respond with exactly one word: yes or no."
@@ -88,6 +91,7 @@ def get_judge_prompt(dataset: str):
             "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
             "The proposed answer is correct if it refers to the same entity or concept as any of the valid answers.\n"
             "Focus on the meaning and identity being conveyed — aliases, abbreviations, and common name variations are acceptable.\n"
+            "If the answer is numerical then focus on the value being expressed — formatting differences such as 5.0 vs 5, $100 vs 100, or 1,000 vs 1000, 4 vs four are the same.\n"
             "A partial or abbreviated answer is acceptable if it unambiguously identifies the correct entity given the question context.\n"
             "There may be multiple valid answers listed — the proposed answer is correct if it matches ANY one of them.\n"
             "Respond with exactly one word: yes or no."
@@ -97,6 +101,23 @@ def get_judge_prompt(dataset: str):
             "Valid answer(s) (match ANY one):\n{ground_truth}\n"
             "Proposed answer: {prediction}\n\n"
             "In the context of the question asked, does the proposed answer refer to the same entity or concept as at least one of the valid answers? "
+            "Respond with exactly one word: yes or no."
+        )
+
+    elif dataset == "gsm8k":
+        system = (
+            "You are an expert math answer evaluator.\n"
+            "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
+            "The proposed answer is correct if it is equivalent to any of the valid answers.\n"
+            "Focus on the value being expressed — formatting differences such as 5.0 vs 5, $100 vs 100, or 1,000 vs 1000, 4 vs four are the same.\n"
+            "There may be multiple valid answers listed — the proposed answer is correct if it equals ANY one of them.\n"
+            "Respond with exactly one word: yes or no."
+        )
+        user = (
+            "Question: {question}\n"
+            "Valid answer(s) (match ANY one):\n{ground_truth}\n"
+            "Proposed answer: {prediction}\n\n"
+            "In the context of the question asked, is the proposed answer equivalent to at least one of the valid answers? "
             "Respond with exactly one word: yes or no."
         )
 

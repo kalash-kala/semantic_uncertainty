@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-LLM Judge Re-labeler for Semantic Uncertainty CSVs.
+LLM Judge Re-labeler for Semantic Uncertainty CSVs (HuggingFace Transformers backend).
+
+Uses AutoModelForCausalLM with device_map="auto" instead of vLLM — works for large
+models like Llama-3.3-70B that exceed vLLM's KV-cache pre-allocation limit.
 
 Processes all rows with labels in ["Correct", "AH", "UH"] using an LLM judge
 to verify semantic correctness, then re-labels based on verdict and entropy:
@@ -18,62 +21,29 @@ The threshold is parsed from the filename (e.g. entropy_0.5) unless overridden
 with --threshold.
 
 Usage (single file):
-    python llm_judge_relabel.py \\
+    python llm_judge_relabel_hf.py \\
         --input_csv  /path/to/detail_svamp__llama_entropy_0.5.csv \\
         --output_csv /path/to/detail_svamp__llama_entropy_0.5_relabeled.csv \\
-        --model      /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ
+        --model      /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b \\
+        --cuda_device 0,1
 
-Batch mode (load model once, process ALL CSVs sequentially):
-    nohup python3 llm_judge_relabel.py --batch_dir /home/kalashkala/Datasets/Semantic-Uncertainty/output --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 --skip_existing > relabel_batch_all.log 2>&1 &
-
-Sample commands for all dataset-model-threshold combos (single-file mode):
-(base dir: /home/kalashkala/Datasets/Semantic-Uncertainty/output)
-
-    # ── SVAMP ─────────────────────────────────────────────────────────────────
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_llama_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_llama_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_gemma_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_gemma_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_mistral_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_mistral_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_qwen_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_svamp__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_svamp_qwen_0.3.log 2>&1 &
-
-    # ── SciQ ──────────────────────────────────────────────────────────────────
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_llama_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_llama_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_gemma_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_gemma_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_mistral_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_mistral_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_qwen_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_sciq__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_sciq_qwen_0.3.log 2>&1 &
-
-    # ── TriviaQA ──────────────────────────────────────────────────────────────
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_llama_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__llama_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_llama_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_gemma_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__gemma_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_gemma_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_mistral_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__mistral_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_mistral_0.3.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.5.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.5_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_qwen_0.5.log 2>&1 &
-    nohup python3 llm_judge_relabel.py --input_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.3.csv --output_csv /home/kalashkala/Datasets/Semantic-Uncertainty/output/detail_triviaqa__qwen_entropy_0.3_relabeled.csv --model /home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ --cuda_device 0 > relabel_triviaqa_qwen_0.3.log 2>&1 &
+Batch mode:
+    nohup python3 llm_judge_relabel_hf.py \\
+        --batch_dir /home/kalashkala/Datasets/Semantic-Uncertainty/output_test \\
+        --model /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b \\
+        --cuda_device 0,1 --skip_existing > relabel_batch_llama70b_hf.log 2>&1 &
 """
 
 import os
-# Fix MKL threading conflict with libgomp (vLLM subprocess inspection crashes without this)
-os.environ.setdefault("MKL_SERVICE_FORCE_INTEL", "1")
-os.environ.setdefault("MKL_THREADING_LAYER", "GNU")
-
 import argparse
 import ast
 import json
 import re
 from pathlib import Path
 
+import torch
 import pandas as pd
-from vllm import LLM, SamplingParams
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Judge prompt
@@ -212,14 +182,6 @@ def parse_ground_truth(gt_str: str, dataset: str) -> list[str]:
         return [normalize_answer(gt_str, dataset)]
 
 
-def is_awq_model(model_path: str) -> bool:
-    """Detect AWQ quantization from model path or config."""
-    if "awq" in model_path.lower():
-        return True
-    config_path = Path(model_path) / "quantize_config.json"
-    return config_path.exists()
-
-
 def load_progress(progress_file: str) -> dict:
     """Load intermediate results from a progress JSON file."""
     if os.path.exists(progress_file):
@@ -242,7 +204,7 @@ def save_progress(progress_file: str, verdicts: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_chat_prompts(rows: list[dict], tokenizer, dataset: str) -> list[str]:
-    """Build chat-formatted prompts for each row."""
+    """Build chat-formatted prompt strings for each row."""
     prompts = []
 
     system_prompt, user_template = get_judge_prompt(dataset)
@@ -290,14 +252,14 @@ def parse_verdict(text: str) -> bool:
 def run_judge(
     df_correct: pd.DataFrame,
     tokenizer,
-    llm: LLM,
-    sampling_params: SamplingParams,
+    model,
     batch_size: int,
+    max_new_tokens: int,
     progress_file: str,
-    dataset: str,   # NEW
+    dataset: str,
 ) -> dict:
     """
-    Run LLM judge over df_correct rows.
+    Run LLM judge over df_correct rows using HuggingFace model.generate().
     Returns dict mapping str(index) → bool verdict.
     Supports resume via progress_file.
     """
@@ -312,15 +274,39 @@ def run_judge(
 
     print(f"Rows to judge: {len(pending_indices)}")
 
+    # Determine input device (first GPU in device_map)
+    first_device = next(model.parameters()).device
+
     for batch_start in range(0, len(pending_indices), batch_size):
         batch_idx  = pending_indices[batch_start: batch_start + batch_size]
         batch_rows = pending_rows[batch_start: batch_start + batch_size]
 
         prompts = build_chat_prompts(batch_rows, tokenizer, dataset)
-        outputs = llm.generate(prompts, sampling_params)
 
-        for idx, output in zip(batch_idx, outputs):
-            raw_text = output.outputs[0].text
+        # Tokenize with left-padding (required for decoder-only batch generation)
+        inputs = tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=2048,
+        )
+        input_ids      = inputs["input_ids"].to(first_device)
+        attention_mask = inputs["attention_mask"].to(first_device)
+        input_len      = input_ids.shape[1]
+
+        with torch.no_grad():
+            output_ids = model.generate(
+                input_ids,
+                attention_mask=attention_mask,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.eos_token_id,
+            )
+
+        for idx, out in zip(batch_idx, output_ids):
+            new_tokens = out[input_len:]
+            raw_text   = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
             verdicts[str(idx)] = parse_verdict(raw_text)
 
         # Persist after every batch so a crash doesn't lose everything
@@ -385,9 +371,9 @@ def process_single_csv(
     output_path: Path,
     threshold: float,
     tokenizer,
-    llm: LLM,
-    sampling_params: SamplingParams,
+    model,
     batch_size: int,
+    max_new_tokens: int,
     dataset: str,
 ) -> bool:
     """
@@ -420,9 +406,9 @@ def process_single_csv(
     verdicts = run_judge(
         df_correct=df_target,
         tokenizer=tokenizer,
-        llm=llm,
-        sampling_params=sampling_params,
+        model=model,
         batch_size=batch_size,
+        max_new_tokens=max_new_tokens,
         progress_file=progress_file,
         dataset=dataset,
     )
@@ -471,7 +457,7 @@ def process_single_csv(
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Re-label 'Correct' rows in a semantic uncertainty CSV using an LLM judge."
+        description="Re-label 'Correct' rows in a semantic uncertainty CSV using an LLM judge (HF backend)."
     )
     # Single-file mode
     p.add_argument("--input_csv", default=None,
@@ -486,52 +472,46 @@ def build_parser() -> argparse.ArgumentParser:
                    help="In batch mode, skip CSVs that already have a _relabeled output.")
     # Model & inference
     p.add_argument("--model",
-                   default="/home/kalashkala/Models/Qwen2.5-32B-Instruct-AWQ",
+                   default="/data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b",
                    help="HuggingFace model path or name used as the judge")
     p.add_argument("--threshold", type=float, default=None,
                    help="Entropy threshold (parsed from filename if omitted)")
-    p.add_argument("--batch_size", type=int, default=64,
-                   help="Inference batch size (default: 64)")
-    p.add_argument("--gpu_memory_utilization", type=float, default=0.90,
-                   help="vLLM GPU memory utilization (default: 0.90)")
+    p.add_argument("--batch_size", type=int, default=8,
+                   help="Inference batch size (default: 8)")
     p.add_argument("--max_new_tokens", type=int, default=16,
                    help="Max tokens for judge response (default: 16 — just yes/no)")
-    p.add_argument("--tensor_parallel_size", type=int, default=1,
-                   help="Number of GPUs for tensor parallelism (default: 1)")
     p.add_argument("--cuda_device", type=str, default=None,
-                   help="CUDA device index or indices to use (e.g., '0' or '0,1')")
+                   help="CUDA device index or indices (e.g. '0' or '0,1'). "
+                        "Sets CUDA_VISIBLE_DEVICES before loading the model.")
     return p
 
 
 def load_model(args):
-    """Load tokenizer and LLM once, return (tokenizer, llm, sampling_params)."""
+    """Load tokenizer and model with device_map='auto' for multi-GPU support."""
     model_path = args.model
+
+    if args.cuda_device is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
+
     print(f"\nLoading tokenizer from: {model_path}")
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    # Left-padding is required for batched generation with decoder-only models
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
-    print(f"Loading LLM from      : {model_path}")
-    llm_kwargs = dict(
-        model=model_path,
-        tensor_parallel_size=args.tensor_parallel_size,
-        gpu_memory_utilization=args.gpu_memory_utilization,
-        max_model_len=2048,  # Reduced from 4096 for memory efficiency
+    print(f"Loading model from    : {model_path}")
+    print("  Using device_map='auto' — distributes layers across available GPUs")
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
-    if is_awq_model(model_path):
-        llm_kwargs["quantization"] = "awq_marlin"
-        llm_kwargs["dtype"] = "float16"
-    else:
-        llm_kwargs["dtype"] = "bfloat16"
-
-    llm = LLM(**llm_kwargs)
+    model.eval()
     print("Model loaded.\n")
 
-    sampling_params = SamplingParams(
-        temperature=0.0,
-        max_tokens=args.max_new_tokens,
-        stop=["\n"],
-    )
-    return tokenizer, llm, sampling_params
+    return tokenizer, model
 
 
 def discover_csvs(batch_dir: Path) -> list[Path]:
@@ -546,9 +526,6 @@ def main() -> None:
     import time
 
     args = build_parser().parse_args()
-
-    if args.cuda_device is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.cuda_device)
 
     # ── Validate arguments ────────────────────────────────────────────────────
     if args.batch_dir is None and args.input_csv is None:
@@ -575,7 +552,7 @@ def main() -> None:
         print()
 
         # Load model ONCE
-        tokenizer, llm, sampling_params = load_model(args)
+        tokenizer, model = load_model(args)
 
         total_start = time.time()
         processed = 0
@@ -617,17 +594,17 @@ def main() -> None:
                     output_path=output_path,
                     threshold=threshold,
                     tokenizer=tokenizer,
-                    llm=llm,
-                    sampling_params=sampling_params,
+                    model=model,
                     batch_size=args.batch_size,
+                    max_new_tokens=args.max_new_tokens,
                     dataset=dataset,
                 )
                 elapsed = time.time() - file_start
-                print(f"  ⏱  Completed in {elapsed:.1f}s")
+                print(f"  Completed in {elapsed:.1f}s")
                 processed += 1
             except Exception as e:
                 elapsed = time.time() - file_start
-                print(f"  ✗  FAILED after {elapsed:.1f}s: {e}")
+                print(f"  FAILED after {elapsed:.1f}s: {e}")
                 failed += 1
 
         total_elapsed = time.time() - total_start
@@ -662,7 +639,7 @@ def main() -> None:
     )
 
     # Load model
-    tokenizer, llm, sampling_params = load_model(args)
+    tokenizer, model = load_model(args)
 
     dataset = detect_dataset(str(input_path))
     print(f"Detected dataset: {dataset}")
@@ -672,9 +649,9 @@ def main() -> None:
         output_path=output_path,
         threshold=threshold,
         tokenizer=tokenizer,
-        llm=llm,
-        sampling_params=sampling_params,
+        model=model,
         batch_size=args.batch_size,
+        max_new_tokens=args.max_new_tokens,
         dataset=dataset,
     )
 

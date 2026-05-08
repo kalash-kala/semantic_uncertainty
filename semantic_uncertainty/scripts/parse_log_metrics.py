@@ -6,9 +6,19 @@ import argparse
 from pathlib import Path
 
 
+def detect_dataset(log_file_path: str) -> str:
+    name = str(log_file_path).lower()
+    if "sciq" in name:
+        return "sciq"
+    if "triviaqa" in name:
+        return "triviaqa"
+    return "generic"
+
+
 def parse_log_metrics(log_file_path, output_path):
     items = []
     p_trues = []
+    dataset = detect_dataset(log_file_path)
 
     with open(log_file_path, 'r', encoding='utf-8') as f:
         lines = f.readlines()
@@ -95,8 +105,9 @@ def parse_log_metrics(log_file_path, output_path):
                                     except ValueError:
                                         pass
 
-            # Combine context and question if both exist
-            if context and question:
+            # For sciq/triviaqa the context is the passage; store question only.
+            # For other datasets, merge context + question as before.
+            if context and question and dataset not in ("sciq", "triviaqa"):
                 item_data['question'] = context + '\n' + question
             elif question:
                 item_data['question'] = question
