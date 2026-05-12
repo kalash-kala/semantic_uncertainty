@@ -814,21 +814,30 @@ class HuggingfaceModel(BaseModel):
                 output_hidden_states=True,
             )
 
+        # Move all hidden states to CPU immediately so the GPU is freed before
+        # we do any per-sample indexing. Keeping `outputs` alive (all 32 layers
+        # on GPU) while iterating caused the memory footprint to ratchet up.
         if 'decoder_hidden_states' in outputs.keys():
-            last_hidden = outputs.decoder_hidden_states[-1]   # [B, max_len, hidden_dim]
+            all_hidden = tuple(h.cpu() for h in outputs.decoder_hidden_states)
         else:
-            last_hidden = outputs.hidden_states[-1]
+            all_hidden = tuple(h.cpu() for h in outputs.hidden_states)
+
+        del outputs, padded, attn_mask
+        torch.cuda.empty_cache()
 
         results = []
         for i, (p_len, g_len) in enumerate(zip(prompt_lens, gen_lens)):
             pad_len = max_len - p_len - g_len
             last_prompt_pos = pad_len + p_len - 1
 
-            last_prompt_emb = last_hidden[i, last_prompt_pos, :].cpu() if p_len > 0 else None
+            # Slice per-sample hidden states across all layers: tuple[Tensor[seq_len, hidden]]
+            sample_all_hidden = tuple(layer[i] for layer in all_hidden)
+
+            last_prompt_emb = sample_all_hidden[-1][last_prompt_pos, :] if p_len > 0 else None
 
             if g_len > 0:
-                first_answer_emb = last_hidden[i, pad_len + p_len, :].cpu()
-                last_token_emb = last_hidden[i, pad_len + p_len + g_len - 1, :].cpu()
+                first_answer_emb = sample_all_hidden[-1][pad_len + p_len, :]
+                last_token_emb = sample_all_hidden[-1][pad_len + p_len + g_len - 1, :]
             else:
                 first_answer_emb = None
                 last_token_emb = None
@@ -837,10 +846,10 @@ class HuggingfaceModel(BaseModel):
                 'first_answer': first_answer_emb,
                 'last_prompt': last_prompt_emb,
                 'last_token': last_token_emb,
+                'all_hidden': sample_all_hidden,
             })
 
-        # Free GPU tensors immediately to keep memory pressure low.
-        del outputs, last_hidden, padded, attn_mask
+        del all_hidden
         return results
 
     def predict_batch_samples(self, input_data, temperature, num_return_sequences):
