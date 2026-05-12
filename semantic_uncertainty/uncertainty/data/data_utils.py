@@ -1,6 +1,8 @@
 """Data Loading Utilities."""
+import ast
 import os
 import re
+import csv
 import json
 import hashlib
 import datasets
@@ -226,6 +228,47 @@ def load_ds(dataset_name, seed, add_options=None):
         # Evaluation-only dataset
         train_dataset = []
         validation_dataset = [reformat(d) for d in dataset["test"]]
+
+    elif dataset_name == "answerable_math":
+        # Local CSVs from technion-cs-nlp/LLMsKnow
+        # Columns: id, question, answer, answerable, category, relevant_ids, source
+        # Sources: GSM8K, SVAMP, MultiArith, ASDiv — all math word problems
+        # Answers are Python-list strings like "[9.0]"; answerable is always True here
+        train_path = "/home/kalashkala/AnswerableMath.csv"
+        test_path = "/home/kalashkala/AnswerableMath_test.csv"
+
+        def _parse_answer(answer_str):
+            """Convert answer field like '[9.0]' to a clean numeric string."""
+            try:
+                parsed = ast.literal_eval(answer_str.strip())
+                if isinstance(parsed, list) and parsed:
+                    val = parsed[0]
+                else:
+                    val = parsed
+                # Drop the decimal if it's a whole number (9.0 → "9")
+                if isinstance(val, float) and val == int(val):
+                    return str(int(val))
+                return str(val)
+            except (ValueError, SyntaxError):
+                return answer_str.strip()
+
+        def _load_csv(path):
+            rows = []
+            with open(path, newline='', encoding='utf-8') as fh:
+                reader = csv.DictReader(fh)
+                for row in reader:
+                    rows.append({
+                        'question': row['question'].strip(),
+                        'context': '',
+                        'id': md5hash(row['id'] + row['source']),
+                        'answers': {'text': [_parse_answer(row['answer'])]},
+                        'answerable': row['answerable'].strip(),
+                        'source': row['source'].strip(),
+                    })
+            return rows
+
+        train_dataset = _load_csv(train_path)
+        validation_dataset = _load_csv(test_path)
 
     else:
         raise ValueError
