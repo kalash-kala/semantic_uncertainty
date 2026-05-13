@@ -47,11 +47,11 @@ def get_parser(stages=['generate', 'compute']):
         )
         parser.add_argument(
             "--dataset", type=str, default="trivia_qa",
-            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math'],
             help="Dataset to use")
         parser.add_argument(
             "--ood_train_dataset", type=str, default=None,
-            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math'],
             help="Dataset to use to assemble few-shot prompt, p_true prompt, and train p_ik.")
         parser.add_argument(
             "--num_samples", type=int, default=400,
