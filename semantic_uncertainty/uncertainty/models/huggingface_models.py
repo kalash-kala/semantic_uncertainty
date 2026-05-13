@@ -766,7 +766,7 @@ class HuggingfaceModel(BaseModel):
 
         return results
 
-    def extract_embeddings_batch(self, sequence_infos):
+    def extract_embeddings_batch(self, sequence_infos, extract_all_hidden=True):
         """Extract embeddings for a batch of (prompt, generated) sequences.
 
         sequence_infos: list of {'prompt_ids': list[int], 'generated_ids': list[int]}
@@ -830,23 +830,52 @@ class HuggingfaceModel(BaseModel):
             pad_len = max_len - p_len - g_len
             last_prompt_pos = pad_len + p_len - 1
 
-            # Slice per-sample hidden states across all layers: tuple[Tensor[seq_len, hidden]]
-            sample_all_hidden = tuple(layer[i] for layer in all_hidden)
-
-            last_prompt_emb = sample_all_hidden[-1][last_prompt_pos, :] if p_len > 0 else None
-
             if g_len > 0:
-                first_answer_emb = sample_all_hidden[-1][pad_len + p_len, :]
-                last_token_emb = sample_all_hidden[-1][pad_len + p_len + g_len - 1, :]
+                first_answer_pos = pad_len + p_len
+                last_token_pos = pad_len + p_len + g_len - 1
+
+            if extract_all_hidden:
+                # Slice per-sample hidden states across all layers at the 3 key positions.
+                # Storing the full sequence [seq_len, hidden] per layer would be ~200 MB per
+                # sequence; slicing to specific token positions gives 33 × [hidden] per position.
+                last_prompt_pos_all = (
+                    tuple(layer[i, last_prompt_pos, :] for layer in all_hidden)
+                    if p_len > 0 else None
+                )
+                if g_len > 0:
+                    first_answer_pos_all = tuple(layer[i, first_answer_pos, :] for layer in all_hidden)
+                    last_token_pos_all = tuple(layer[i, last_token_pos, :] for layer in all_hidden)
+                    first_answer_emb = first_answer_pos_all[-1]
+                    last_token_emb = last_token_pos_all[-1]
+                else:
+                    first_answer_pos_all = None
+                    last_token_pos_all = None
+                    first_answer_emb = None
+                    last_token_emb = None
+                last_prompt_emb = last_prompt_pos_all[-1] if last_prompt_pos_all is not None else None
+                all_hidden_dict = {
+                    'last_prompt': last_prompt_pos_all,
+                    'first_answer': first_answer_pos_all,
+                    'last_token': last_token_pos_all,
+                }
             else:
-                first_answer_emb = None
-                last_token_emb = None
+                # Sampled sequences: only extract scalar embeddings from last layer.
+                # Skipping all-layer slicing reduces per-sequence storage from ~1.62 MB to ~48 KB.
+                last_layer = all_hidden[-1]  # shape [B, seq_len, hidden]
+                last_prompt_emb = last_layer[i, last_prompt_pos, :] if p_len > 0 else None
+                if g_len > 0:
+                    first_answer_emb = last_layer[i, first_answer_pos, :]
+                    last_token_emb = last_layer[i, last_token_pos, :]
+                else:
+                    first_answer_emb = None
+                    last_token_emb = None
+                all_hidden_dict = None
 
             results.append({
                 'first_answer': first_answer_emb,
                 'last_prompt': last_prompt_emb,
                 'last_token': last_token_emb,
-                'all_hidden': sample_all_hidden,
+                'all_hidden': all_hidden_dict,
             })
 
         del all_hidden
