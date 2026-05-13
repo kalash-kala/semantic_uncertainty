@@ -12,7 +12,6 @@ import gc
 import json
 import logging
 import os
-import pickle
 import random
 import shutil
 import time
@@ -59,6 +58,11 @@ utils.setup_logger()
 # Example command gemma + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_trivia-qa-nocontext_combined.log 2>&1 &
 # Example command Llama + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_trivia-qa-nocontext_combined.log 2>&1 &
 # Example command mistral + trivia_qa_nocontext: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset trivia_qa_nocontext --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_trivia-qa-nocontext_combined.log 2>&1 &
+
+# Example command qwen + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name Qwen/Qwen2.5-7B-Instruct --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_qwen_answerable_math_combined.log 2>&1 &
+# Example command gemma + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name google/gemma-3-12b-it --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_gemma_answerable_math_combined.log 2>&1 &
+# Example command Llama + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_answerable_math_combined.log 2>&1 &
+# Example command mistral + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_answerable_math_combined.log 2>&1 &
 
 def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
     """Read JSONL (with token IDs), extract embeddings in batches, return full generations dict.
@@ -109,108 +113,43 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
             else:
                 flat.append((eid, j, None))  # old format
 
-    # Only extract embeddings for greedy (most_likely_answer) sequences.
-    # all_hidden stores 33 layers × 3 positions × 4096 floats ≈ 1.62 MB per greedy sequence.
-    # Sampled responses (ridx >= 0) get None embeddings intentionally — not needed for analysis.
-    need_greedy = [(eid, ridx, info) for eid, ridx, info in flat if info is not None and ridx == -1]
+    # Batch-extract embeddings only for records that need it.
+    need_extraction = [(eid, ridx, info) for eid, ridx, info in flat if info is not None]
+    emb_map = {}  # (eid, ridx) → embedding dict
 
-    SHARD_INTERVAL = 200  # batches between flushes
-    shard_dirs = []  # track shard dir for final cleanup
-
-    emb_map = {}
-
-    for group_list, shard_dir_name, do_all_hidden in [
-        (need_greedy, 'emb_shards_greedy', True),
-    ]:
-        shard_dir = os.path.join(os.path.dirname(jsonl_path), shard_dir_name)
-        shard_dirs.append(shard_dir)
-        os.makedirs(shard_dir, exist_ok=True)
-
-        existing_shards = sorted(f for f in os.listdir(shard_dir) if f.endswith('.pkl'))
-        covered_batch_indices = set()
-        for shard_name in existing_shards:
-            shard_path = os.path.join(shard_dir, shard_name)
-            with open(shard_path, 'rb') as fh:
-                shard_data = pickle.load(fh)
-            covered_batch_indices.update(shard_data.get('batch_indices', []))
-        if covered_batch_indices:
-            logging.info('Resuming %s extraction: %d batches already done via %d shards.',
-                         shard_dir_name, len(covered_batch_indices), len(existing_shards))
-
-        group_emb_map = {}
-        shard_idx = len(existing_shards)
-        all_batch_indices = list(range(0, len(group_list), bsz))
-        pending_batch_indices = []
-
-        label = 'greedy (all_hidden)' if do_all_hidden else 'sampled (scalars only)'
-        logging.info('Extracting embeddings for %d sequences [%s] (bsz=%d)…',
-                     len(group_list), label, bsz)
-
-        for batch_num, batch_start in enumerate(tqdm(all_batch_indices, desc=f'Extracting embeddings [{label}]')):
-            if batch_num in covered_batch_indices:
-                continue
-
-            batch = group_list[batch_start: batch_start + bsz]
-            keys = [(eid, ridx) for eid, ridx, _ in batch]
-            seq_infos = [info for _, _, info in batch]
-            try:
-                embs = model.extract_embeddings_batch(seq_infos, extract_all_hidden=do_all_hidden)
-                for key, emb in zip(keys, embs):
-                    group_emb_map[key] = emb
-            except RuntimeError as exc:
-                if 'out of memory' in str(exc).lower():
-                    logging.warning('OOM during embedding batch at %d. Reducing batch size and retrying…', batch_start)
-                    reduced_bsz = max(2, bsz // 2)
-                    for sub_start in range(0, len(batch), reduced_bsz):
-                        sub_batch = batch[sub_start: sub_start + reduced_bsz]
-                        sub_keys = keys[sub_start: sub_start + reduced_bsz]
-                        sub_infos = [info for _, _, info in sub_batch]
-                        try:
-                            embs = model.extract_embeddings_batch(sub_infos, extract_all_hidden=do_all_hidden)
-                            for key, emb in zip(sub_keys, embs):
-                                group_emb_map[key] = emb
-                        except Exception as sub_exc:
-                            logging.error('Sub-batch extraction failed: %s', sub_exc)
-                            for key in sub_keys:
-                                group_emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
-                else:
-                    logging.error('Embedding extraction failed at batch %d: %s', batch_start, exc, exc_info=True)
-                    for key in keys:
-                        group_emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
-            except Exception as exc:
+    logging.info('Extracting embeddings for %d samples (bsz=%d)…', len(need_extraction), bsz)
+    for batch_start in tqdm(range(0, len(need_extraction), bsz), desc='Extracting embeddings'):
+        batch = need_extraction[batch_start: batch_start + bsz]
+        keys = [(eid, ridx) for eid, ridx, _ in batch]
+        seq_infos = [info for _, _, info in batch]
+        try:
+            embs = model.extract_embeddings_batch(seq_infos)
+            for key, emb in zip(keys, embs):
+                emb_map[key] = emb
+        except RuntimeError as exc:
+            if 'out of memory' in str(exc).lower():
+                logging.warning('OOM during embedding batch at %d. Reducing batch size and retrying…', batch_start)
+                reduced_bsz = max(2, bsz // 2)
+                for sub_start in range(0, len(batch), reduced_bsz):
+                    sub_batch = batch[sub_start: sub_start + reduced_bsz]
+                    sub_keys = keys[sub_start: sub_start + reduced_bsz]
+                    sub_infos = [info for _, _, info in sub_batch]
+                    try:
+                        embs = model.extract_embeddings_batch(sub_infos)
+                        for key, emb in zip(sub_keys, embs):
+                            emb_map[key] = emb
+                    except Exception as sub_exc:
+                        logging.error('Sub-batch extraction failed: %s', sub_exc)
+                        for key in sub_keys:
+                            emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+            else:
                 logging.error('Embedding extraction failed at batch %d: %s', batch_start, exc, exc_info=True)
                 for key in keys:
-                    group_emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
-
-            pending_batch_indices.append(batch_num)
-
-            if len(pending_batch_indices) >= SHARD_INTERVAL:
-                shard_path = os.path.join(shard_dir, f'shard_{shard_idx:06d}.pkl')
-                with open(shard_path, 'wb') as fh:
-                    pickle.dump({'batch_indices': pending_batch_indices, 'emb_map': group_emb_map}, fh)
-                logging.info('Flushed shard %d (%d batches) to %s', shard_idx, len(pending_batch_indices), shard_path)
-                group_emb_map = {}
-                pending_batch_indices = []
-                shard_idx += 1
-
-        if group_emb_map or pending_batch_indices:
-            shard_path = os.path.join(shard_dir, f'shard_{shard_idx:06d}.pkl')
-            with open(shard_path, 'wb') as fh:
-                pickle.dump({'batch_indices': pending_batch_indices, 'emb_map': group_emb_map}, fh)
-            logging.info('Flushed final shard %d to %s', shard_idx, shard_path)
-
-    # Merge all shards from both greedy and sampled groups into a single emb_map.
-    emb_map = {}
-    for shard_dir in shard_dirs:
-        logging.info('Merging shards from %s…', shard_dir)
-        for shard_name in sorted(os.listdir(shard_dir)):
-            if not shard_name.endswith('.pkl'):
-                continue
-            shard_path = os.path.join(shard_dir, shard_name)
-            with open(shard_path, 'rb') as fh:
-                shard_data = pickle.load(fh)
-            emb_map.update(shard_data['emb_map'])
-            del shard_data
+                    emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
+        except Exception as exc:
+            logging.error('Embedding extraction failed at batch %d: %s', batch_start, exc, exc_info=True)
+            for key in keys:
+                emb_map[key] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
 
     logging.info('Extraction complete: %d embeddings extracted, %d records total',
                  len(emb_map), len(all_ids))
@@ -231,7 +170,7 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
             missing_embeddings.append((eid, -1))
             # Use None embedding as fallback to avoid downstream KeyError
             mla.pop('generated_ids', None)
-            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
+            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
         rec['most_likely_answer'] = mla
 
         new_responses = []
@@ -240,8 +179,9 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
             if (eid, j) in emb_map:
                 resp[2] = emb_map[(eid, j)]  # replace generated_ids with embedding dict
             elif isinstance(resp[2], list) and (not resp[2] or isinstance(resp[2][0], int)):
-                # Sampled responses: embeddings intentionally not extracted.
-                resp[2] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
+                # Sample has generated_ids but no extracted embedding — extraction incomplete
+                missing_embeddings.append((eid, j))
+                resp[2] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
             new_responses.append(tuple(resp))
         rec['responses'] = new_responses
 
@@ -259,7 +199,7 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
         if 'embedding' not in mla:
             missing_keys.append(eid)
             # Add fallback None embedding to avoid downstream KeyError
-            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None, 'all_hidden': None}
+            mla['embedding'] = {'first_answer': None, 'last_prompt': None, 'last_token': None}
             rec['most_likely_answer'] = mla
 
     if missing_keys:
@@ -268,11 +208,6 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
                        'Downstream analysis will use None for these samples.', len(missing_keys))
     else:
         logging.info('Embeddings successfully extracted for all %d samples.', len(generations))
-
-    # Clean up both shard directories now that the final generations dict is assembled.
-    for shard_dir in shard_dirs:
-        shutil.rmtree(shard_dir, ignore_errors=True)
-
     return generations
 
 
