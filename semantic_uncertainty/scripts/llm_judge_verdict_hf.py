@@ -16,12 +16,14 @@ Usage:
 Nohup Usage:
     nohup python3 llm_judge_verdict_hf.py --model /data/.cache/huggingface/hub/models--meta-llama--Llama-3.3-70B-Instruct/snapshots/6f6073b423013f6a7d4d9f39144961bfbfbc386b --cuda_device 0,1 --batch_size 32 > llm_judge_verdict_gsm8k_hf.log 2>&1 &
 
-    Edit FILE_LIST below to specify which CSVs to process.
+    Pass --files/--glob to specify which CSVs to process
+    (or edit FILE_LIST below for quick interactive use).
 """
 
 import os
 import argparse
 import ast
+import glob
 import json
 import re
 import time
@@ -123,6 +125,33 @@ def get_judge_prompt(dataset: str):
             "Respond with exactly one word: yes or no."
         )
 
+    elif dataset == "nq":
+        # Natural Questions (nq_open) is short-factoid QA whose ground truth is a
+        # list of annotator-provided aliases for the same entity (e.g.
+        # ['14 December 1972 UTC', 'December 1972']), so this mirrors the
+        # triviaqa prompt: match on entity identity, not surface form. The one
+        # NQ-specific addition is the date/granularity clause -- NQ aliases
+        # disagree on date precision far more often than TriviaQA's do.
+        system = (
+            "You are an expert factual QA evaluator.\n"
+            "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
+            "The proposed answer is correct if it refers to the same entity, date, or concept as any of the valid answers.\n"
+            "Focus on the meaning and identity being conveyed — aliases, abbreviations, and common name variations are acceptable.\n"
+            "For dates, a coarser but consistent answer is acceptable if it does not contradict a valid answer "
+            "(December 1972 vs 14 December 1972 are the same; December 1971 is not).\n"
+            "If the answer is numerical then focus on the value being expressed — formatting differences such as 5.0 vs 5, $100 vs 100, or 1,000 vs 1000, 4 vs four are the same.\n"
+            "A partial or abbreviated answer is acceptable if it unambiguously identifies the correct entity given the question context.\n"
+            "There may be multiple valid answers listed — the proposed answer is correct if it matches ANY one of them.\n"
+            "Respond with exactly one word: yes or no."
+        )
+        user = (
+            "Question: {question}\n"
+            "Valid answer(s) (match ANY one):\n{ground_truth}\n"
+            "Proposed answer: {prediction}\n\n"
+            "In the context of the question asked, does the proposed answer refer to the same entity, date, or concept as at least one of the valid answers? "
+            "Respond with exactly one word: yes or no."
+        )
+
     elif dataset == "gsm8k":
         system = (
             "You are an expert math answer evaluator.\n"
@@ -217,6 +246,13 @@ def detect_dataset(filename: str) -> str:
         return "answerable_math"
     elif "gsm8k" in name:
         return "gsm8k"
+    # "nq" is only two characters, so a bare `"nq" in name` test would fire on
+    # any path that happens to contain them (a username, a model dir, a scratch
+    # mount). Require an explicit token boundary -- ..._nq_..., .../nq/...,
+    # ...-nq.csv -- so detection cannot be hijacked by directory layout on a
+    # different server. Checked last so the longer, unambiguous keys still win.
+    elif re.search(r"(?:^|[_\-/])nq(?:[_\-/.]|$)", name):
+        return "nq"
     return "generic"
 
 
@@ -495,25 +531,63 @@ def build_parser() -> argparse.ArgumentParser:
                         "Sets CUDA_VISIBLE_DEVICES before loading the model.")
     p.add_argument("--skip_existing", action="store_true",
                    help="Skip CSVs that already have a _llm_verdict output.")
+    p.add_argument("--files", nargs="+", default=None,
+                   help="One or more CSV paths to judge. Overrides FILE_LIST. "
+                        "Use this instead of editing the script when running on "
+                        "another server.")
+    p.add_argument("--glob", default=None,
+                   help="Glob pattern selecting CSVs to judge, e.g. "
+                        "'/path/to/nq/uncertainty_run_*_nq_combined.csv'. "
+                        "Overrides FILE_LIST; combines with --files.")
     return p
+
+
+def resolve_input_files(args) -> list[str]:
+    """Pick the CSV list from --files/--glob, falling back to FILE_LIST.
+
+    FILE_LIST is a hardcoded convenience for interactive use on one box; the
+    CLI options exist so other servers never have to edit this file.
+    """
+    files: list[str] = []
+    if args.files:
+        files.extend(args.files)
+    if args.glob:
+        matched = sorted(glob.glob(args.glob))
+        if not matched:
+            raise FileNotFoundError(f"--glob matched no files: {args.glob}")
+        files.extend(matched)
+    if not files:
+        files = list(FILE_LIST)
+
+    # Preserve order while dropping duplicates (a path can arrive via both
+    # --files and --glob).
+    seen = set()
+    deduped = []
+    for f in files:
+        if f not in seen:
+            seen.add(f)
+            deduped.append(f)
+    return deduped
 
 
 def main() -> None:
     args = build_parser().parse_args()
 
-    if not FILE_LIST:
-        print("FILE_LIST is empty. Add CSV paths to FILE_LIST at the top of the script.")
+    file_list = resolve_input_files(args)
+
+    if not file_list:
+        print("No input CSVs. Pass --files/--glob, or add paths to FILE_LIST.")
         return
 
     # Validate all paths before loading model
-    for f in FILE_LIST:
+    for f in file_list:
         if not Path(f).exists():
             raise FileNotFoundError(f"File not found: {f}")
 
     print(f"{'=' * 60}")
-    print(f"LLM VERDICT — {len(FILE_LIST)} file(s) to process")
+    print(f"LLM VERDICT — {len(file_list)} file(s) to process")
     print(f"{'=' * 60}")
-    for i, f in enumerate(FILE_LIST, 1):
+    for i, f in enumerate(file_list, 1):
         print(f"  {i:2d}. {f}")
     print()
 
@@ -524,13 +598,13 @@ def main() -> None:
     skipped = 0
     failed = 0
 
-    for i, csv_path_str in enumerate(FILE_LIST, 1):
+    for i, csv_path_str in enumerate(file_list, 1):
         csv_path = Path(csv_path_str)
         output_path = csv_path.parent / (csv_path.stem + "_llm_verdict.csv")
 
         if args.skip_existing and output_path.exists():
             print(f"\n{'─' * 60}")
-            print(f"[{i}/{len(FILE_LIST)}] SKIPPING (output exists): {csv_path.name}")
+            print(f"[{i}/{len(file_list)}] SKIPPING (output exists): {csv_path.name}")
             print(f"{'─' * 60}")
             skipped += 1
             continue
@@ -538,7 +612,7 @@ def main() -> None:
         dataset = detect_dataset(str(csv_path))
 
         print(f"\n{'━' * 60}")
-        print(f"[{i}/{len(FILE_LIST)}] Processing: {csv_path.name}")
+        print(f"[{i}/{len(file_list)}] Processing: {csv_path.name}")
         print(f"  Dataset type: {dataset}  →  Output: {output_path.name}")
         print(f"{'━' * 60}")
 
@@ -565,7 +639,7 @@ def main() -> None:
     print(f"\n{'━' * 60}")
     print(f"ALL DONE")
     print(f"{'━' * 60}")
-    print(f"  Total files  : {len(FILE_LIST)}")
+    print(f"  Total files  : {len(file_list)}")
     print(f"  Processed    : {processed}")
     print(f"  Skipped      : {skipped}")
     print(f"  Failed       : {failed}")
