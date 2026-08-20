@@ -64,7 +64,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 from uncertainty.utils import utils
-from generate_answers_combined import _extract_embeddings_from_token_ids
+from generate_answers_combined import (
+    ALL_POSITIONS, _extract_embeddings_from_token_ids, _link_or_copy)
 
 utils.setup_logger()
 
@@ -102,6 +103,16 @@ def main():
         '--model_max_new_tokens', type=int, default=15,
         help='Must match the value used during generation (affects tokenizer stop logic).',
     )
+    parser.add_argument(
+        '--embedding_positions', type=str,
+        default='first_answer,last_prompt,last_token',
+        help='Comma-separated subset of first_answer,last_prompt,last_token to keep.',
+    )
+    parser.add_argument(
+        '--embedding_sequences', type=str, default='all', choices=['all', 'greedy'],
+        help="'all' rebuilds the greedy answer plus every sampled response; "
+             "'greedy' rebuilds only the greedy answer (~11x cheaper).",
+    )
 
     args = parser.parse_args()
 
@@ -116,8 +127,17 @@ def main():
     logging.info('Loading model: %s', args.model_name)
     model = utils.init_model(args)
 
-    logging.info('Extracting embeddings from: %s  (batch_size=%d)', args.jsonl_path, args.batch_size)
-    generations = _extract_embeddings_from_token_ids(model, args.jsonl_path, bsz=args.batch_size)
+    positions = [p.strip() for p in args.embedding_positions.split(',') if p.strip()]
+    bad = [p for p in positions if p not in ALL_POSITIONS]
+    if bad:
+        logging.error('Unknown --embedding_positions %s; valid: %s', bad, list(ALL_POSITIONS))
+        sys.exit(1)
+
+    logging.info('Extracting embeddings from: %s  (batch_size=%d, positions=%s, sequences=%s)',
+                 args.jsonl_path, args.batch_size, positions, args.embedding_sequences)
+    generations = _extract_embeddings_from_token_ids(
+        model, args.jsonl_path, bsz=args.batch_size,
+        positions=positions, sequences=args.embedding_sequences)
 
     logging.info('Unloading model.')
     del model
@@ -126,7 +146,8 @@ def main():
 
     logging.info('Saving PKL files to: %s', args.out_dir)
     utils.save(generations, 'combined_generations.pkl')
-    utils.save(generations, 'validation_generations.pkl')
+    # Hard-link instead of pickling identical bytes twice (see _link_or_copy).
+    _link_or_copy('combined_generations.pkl', 'validation_generations.pkl')
     logging.info('Done. Written files:')
     logging.info('  %s/combined_generations.pkl', args.out_dir)
     logging.info('  %s/validation_generations.pkl', args.out_dir)
