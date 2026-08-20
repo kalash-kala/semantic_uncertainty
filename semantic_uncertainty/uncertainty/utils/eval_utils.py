@@ -23,11 +23,11 @@ def bootstrap(function, rng, n_resamples=1000):
 
 def auroc(y_true, y_score):
     y_score = np.array(y_score, dtype=np.float64)
-    # Replace inf/-inf with finite extremes to avoid sklearn ValueError.
-    # This can happen when entropy computation underflows.
+    # Replace inf/-inf and NaN with finite extremes to avoid sklearn ValueError.
+    # NaN can arise from 0/0 in entropy; np.clip passes NaN through, so handle it first.
     if not np.all(np.isfinite(y_score)):
-        logging.warning('auroc: y_score contains non-finite values; clipping to [-1e6, 1e6].')
-        y_score = np.clip(y_score, -1e6, 1e6)
+        logging.warning('auroc: y_score contains non-finite values; replacing NaN/inf.')
+        y_score = np.nan_to_num(y_score, nan=0.0, posinf=1e6, neginf=-1e6)
     fpr, tpr, thresholds = metrics.roc_curve(y_true, y_score)
     del thresholds
     return metrics.auc(fpr, tpr)

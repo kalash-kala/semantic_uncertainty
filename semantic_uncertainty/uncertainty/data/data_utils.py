@@ -5,6 +5,8 @@ import re
 import csv
 import json
 import hashlib
+from collections import Counter
+import numpy as np
 import datasets
 
 
@@ -29,8 +31,15 @@ def _remove_duplicate_questions(dataset):
 
     for item in dataset:
         question_text = item['question'].lower().strip()
-        if question_text not in seen_questions:
-            seen_questions.add(question_text)
+        # For image-conditioned data the question text alone is not the
+        # example: "what color is the bus?" is a different question against a
+        # different image. Key on (question, image) so only true duplicates go.
+        if 'image_id' in item:
+            key = (question_text, item['image_id'])
+        else:
+            key = question_text
+        if key not in seen_questions:
+            seen_questions.add(key)
             unique_dataset.append(item)
 
     return unique_dataset
@@ -269,6 +278,109 @@ def load_ds(dataset_name, seed, add_options=None):
 
         train_dataset = _load_csv(train_path)
         validation_dataset = _load_csv(test_path)
+
+    elif dataset_name == "advqa":
+        # AdVQA val split (human-adversarial VQA over COCO val2017 images).
+        # Open-ended: each question carries 10 free-form annotator answers.
+        root = "/data/kalashkala/vqa_data"
+        q_path = f"{root}/advqa/v1_OpenEnded_mscoco_val2017_advqa_questions.json"
+        a_path = f"{root}/advqa/v1_mscoco_val2017_advqa_annotations.json"
+        img_dir = f"{root}/coco/val2017"
+
+        with open(q_path, encoding='utf-8') as fh:
+            questions = json.load(fh)['questions']
+        with open(a_path, encoding='utf-8') as fh:
+            annotations = json.load(fh)['annotations']
+        ann_by_qid = {a['question_id']: a for a in annotations}
+
+        rows = []
+        for q in questions:
+            ann = ann_by_qid.get(q['question_id'])
+            if ann is None:
+                continue
+            # A binary answer space is effectively 2-option multiple choice: it
+            # puts a 50% floor under accuracy and caps semantic-entropy
+            # clustering at 2 clusters. Filter before the split so both splits
+            # are consistently filtered.
+            if ann['answer_type'] == 'yes/no':
+                continue
+            all_answers = [a['answer'].strip() for a in ann['answers']]
+            counts = Counter(all_answers)
+            consensus, support = counts.most_common(1)[0]
+            rows.append({
+                'question': q['question'].strip(),
+                'context': '',
+                'id': md5hash(f"advqa-{q['question_id']}"),
+                # Ground truth is the consensus answer, not all 10: squad_v2
+                # maxes over references, and "unanswerable" is a literal
+                # annotator answer in 12.8% of questions, so an all-10
+                # reference set would credit an image-blind model that always
+                # says "unanswerable". all_answers is kept so the label rule
+                # (or an LLM judge) can be revisited without regenerating.
+                'answers': {'text': [consensus]},
+                'all_answers': all_answers,
+                'consensus_support': support,
+                'answer_type': ann['answer_type'],
+                'image_id': q['image_id'],
+                'question_id': q['question_id'],
+                'image_path': f"{img_dir}/{q['image_id']:012d}.jpg",
+            })
+
+        rows.sort(key=lambda r: r['question_id'])
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(rows))
+        rows = [rows[i] for i in perm]
+        # The train slice is unused at --num_few_shot 0 but keeps
+        # _build_eval_pool and split_dataset on their normal path.
+        train_dataset = rows[:1000]
+        validation_dataset = rows[1000:]
+
+    elif dataset_name == "vqav2":
+        # VQA v2 val2014, pre-sampled to 1/4 of the images (random, seed 42)
+        # and yes/no questions dropped, mirroring the advqa filtering rationale
+        # (binary answers put a 50% guessing floor under accuracy and cap
+        # semantic-entropy clustering at 2 clusters). Ground truth is the
+        # official 'multiple_choice_answer' consensus field.
+        root = "/data/kalashkala/vqa_data/vqav2/sampled"
+        q_path = f"{root}/sampled_questions.json"
+        a_path = f"{root}/sampled_annotations.json"
+        img_dir = "/data/kalashkala/vqa_data/coco/val2014"
+
+        with open(q_path, encoding='utf-8') as fh:
+            questions = json.load(fh)
+        with open(a_path, encoding='utf-8') as fh:
+            annotations = json.load(fh)
+        ann_by_qid = {a['question_id']: a for a in annotations}
+
+        rows = []
+        for q in questions:
+            ann = ann_by_qid.get(q['question_id'])
+            if ann is None:
+                continue
+            all_answers = [a['answer'].strip() for a in ann['answers']]
+            counts = Counter(all_answers)
+            _, support = counts.most_common(1)[0]
+            rows.append({
+                'question': q['question'].strip(),
+                'context': '',
+                'id': md5hash(f"vqav2-{q['question_id']}"),
+                'answers': {'text': [ann['multiple_choice_answer']]},
+                'all_answers': all_answers,
+                'consensus_support': support,
+                'answer_type': ann['answer_type'],
+                'image_id': q['image_id'],
+                'question_id': q['question_id'],
+                'image_path': f"{img_dir}/COCO_val2014_{q['image_id']:012d}.jpg",
+            })
+
+        rows.sort(key=lambda r: r['question_id'])
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(rows))
+        rows = [rows[i] for i in perm]
+        # The train slice is unused at --num_few_shot 0 but keeps
+        # _build_eval_pool and split_dataset on their normal path.
+        train_dataset = rows[:1000]
+        validation_dataset = rows[1000:]
 
     else:
         raise ValueError

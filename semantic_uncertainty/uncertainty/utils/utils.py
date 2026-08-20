@@ -3,6 +3,7 @@ import os
 import logging
 import argparse
 import pickle
+import re
 import uuid
 
 import wandb
@@ -14,7 +15,102 @@ from uncertainty.utils import openai as oai
 
 BRIEF_PROMPTS = {
     'default': "Answer the following question as briefly as possible.\n",
-    'chat': 'Answer the following question in a single brief but complete sentence.\n'}
+    'chat': 'Answer the following question in a single brief but complete sentence.\n',
+    # Chain-of-thought. Used with --reasoning. The '####' delimiter is the GSM8K
+    # convention and is what ANSWER_DELIMITER / extract_final_answer key off, so
+    # the three must stay in sync.
+    'cot': ("Solve the following math problem. Reason step by step, then give "
+            "the final numeric answer on a new line starting with '#### '.\n")}
+
+ANSWER_DELIMITER = '####'
+
+# Stop sequences for chain-of-thought generation. The default set contains '\n',
+# which truncates reasoning at the first line break and is the single hardest
+# blocker on CoT — no token budget can work around it. Here we keep only the
+# few-shot record separator and the field markers.
+COT_STOP_SEQUENCES = ['\n\n\n\n', 'Question:', 'Context:']
+
+# The answerable_math CSV has no rationale column (only id,question,answer,
+# answerable,category,relevant_ids,source), so few-shot CoT exemplars cannot be
+# drawn from the data — using the dataset's own bare numeric answers as
+# demonstrations is exactly what teaches the model to skip reasoning. These are
+# hand-written and deliberately generic.
+COT_FEWSHOT_EXEMPLARS = [
+    ("Natalia sold clips to 48 friends in April, and then she sold half as "
+     "many clips in May. How many clips did she sell altogether?",
+     "In April Natalia sold 48 clips.\n"
+     "In May she sold half as many, so she sold 48 / 2 = 24 clips.\n"
+     "Altogether she sold 48 + 24 = 72 clips.\n"
+     f"{ANSWER_DELIMITER} 72"),
+    ("A robe takes 2 bolts of blue fiber and half that much white fiber. How "
+     "many bolts in total does it take?",
+     "The robe takes 2 bolts of blue fiber.\n"
+     "It takes half that much white fiber, so 2 / 2 = 1 bolt of white fiber.\n"
+     "In total that is 2 + 1 = 3 bolts.\n"
+     f"{ANSWER_DELIMITER} 3"),
+    ("Weng earns $12 an hour for babysitting. Yesterday, she just did 50 "
+     "minutes of babysitting. How much did she earn?",
+     "Weng earns $12 per 60 minutes, so per minute she earns 12 / 60 = $0.2.\n"
+     "For 50 minutes she earned 50 * 0.2 = $10.\n"
+     f"{ANSWER_DELIMITER} 10"),
+    ("Betty is saving money for a new wallet which costs $100. Betty has only "
+     "half of the money she needs. Her parents decided to give her $15 for "
+     "that purpose, and her grandparents twice as much as her parents. How "
+     "much more money does Betty need to buy the wallet?",
+     "Betty has half of $100, which is 100 / 2 = $50.\n"
+     "Her parents give her $15 and her grandparents give twice as much, "
+     "so 2 * 15 = $30.\n"
+     "Now she has 50 + 15 + 30 = $95.\n"
+     "She still needs 100 - 95 = $5.\n"
+     f"{ANSWER_DELIMITER} 5"),
+]
+
+
+def extract_final_answer(text):
+    """Pull the final answer out of a (possibly chain-of-thought) response.
+
+    Returns the text after the first '####' delimiter. If the model never emitted
+    one — which happens when it runs out of tokens mid-derivation — fall back to
+    the last number in the response, and finally to the stripped text.
+
+    The fallback matters: without it a correct derivation that was truncated
+    before the delimiter would be scored as wrong.
+    """
+    if text is None:
+        return ''
+    if ANSWER_DELIMITER in text:
+        # Use the FIRST '####', not the last: models sometimes re-echo the
+        # delimiter afterwards (e.g. "#### 70\n#### Final Answer: 70\n####
+        # \\####"), and the trailing occurrence can be empty or garbage,
+        # silently corrupting the extracted answer.
+        tail = text.split(ANSWER_DELIMITER, 1)[1]
+        # Stop at a newline so a trailing few-shot fragment cannot leak in.
+        return tail.split('\n')[0].strip()
+    numbers = re.findall(r'-?\d[\d,]*\.?\d*', text)
+    if numbers:
+        return numbers[-1].strip()
+    return text.strip()
+
+
+def normalize_numeric_answer(text):
+    """Canonicalise an answer for comparison: '[9.0]', '9.0', '$9', '9' -> '9'.
+
+    answerable_math stores references as the string '[9.0]', so without this the
+    reference and a correct prediction never match.
+    """
+    if text is None:
+        return ''
+    s = str(text).strip().strip('[]').replace(',', '').replace('$', '').strip()
+    m = re.search(r'-?\d*\.?\d+', s)
+    if not m:
+        return s.lower()
+    num = m.group(0)
+    try:
+        f = float(num)
+    except ValueError:
+        return num
+    # Render integral floats without the trailing '.0' so 9.0 == 9.
+    return str(int(f)) if f == int(f) else str(f)
 
 
 def get_parser(stages=['generate', 'compute']):
@@ -28,8 +124,11 @@ def get_parser(stages=['generate', 'compute']):
     parser.add_argument('--random_seed', type=int, default=10)
     parser.add_argument(
         "--metric", type=str, default="squad",
-        choices=['squad', 'llm', 'llm_gpt-3.5', 'llm_gpt-4'],
-        help="Metric to assign accuracy to generations.")
+        choices=['squad', 'math', 'llm', 'llm_gpt-3.5', 'llm_gpt-4'],
+        help="Metric to assign accuracy to generations. Use 'math' with "
+             "--reasoning: it exact-matches the extracted final answer, whereas "
+             "'squad' F1-scores the whole response and so penalises correct "
+             "chain-of-thought derivations.")
     parser.add_argument(
         "--compute_accuracy_at_all_temps",
         action=argparse.BooleanOptionalAction, default=True,
@@ -47,11 +146,11 @@ def get_parser(stages=['generate', 'compute']):
         )
         parser.add_argument(
             "--dataset", type=str, default="trivia_qa",
-            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math', 'math_500', 'advqa', 'vqav2'],
             help="Dataset to use")
         parser.add_argument(
             "--ood_train_dataset", type=str, default=None,
-            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math'],
+            choices=['trivia_qa', 'trivia_qa_nocontext', 'squad', 'bioasq', 'nq', 'svamp', 'sciq', 'gsm8k', 'answerable_math', 'math_500', 'advqa', 'vqav2'],
             help="Dataset to use to assemble few-shot prompt, p_true prompt, and train p_ik.")
         parser.add_argument(
             "--num_samples", type=int, default=400,
@@ -111,6 +210,39 @@ def get_parser(stages=['generate', 'compute']):
             "--generation_batch_size", type=int, default=1,
             help="Number of questions to process in one model.generate() call. "
                  "Combined with num_return_sequences for A+B batching.")
+        parser.add_argument(
+            "--enable_thinking", default=False,
+            action=argparse.BooleanOptionalAction,
+            help="Enable thinking/reasoning mode for models that support it (like Qwen3).")
+        parser.add_argument(
+            "--reasoning", default=False,
+            action=argparse.BooleanOptionalAction,
+            help="Chain-of-thought mode: drop '\\n' from the stop sequences, use "
+                 "the 'cot' brief prompt with hand-written reasoning exemplars, "
+                 "and score/cluster on the extracted final answer instead of the "
+                 "full derivation. Needs a large --model_max_new_tokens (~256).")
+        # --- hidden-state storage control -----------------------------------
+        # Hidden states dominate run size (~270 KB/question for a 4096-dim model
+        # at 3 positions x 11 sequences). They are a recomputable cache: the
+        # JSONL keeps prompt_token_ids + generated_ids, so extract_hidden_states.py
+        # can rebuild them by teacher forcing. Default off; opt in when needed.
+        parser.add_argument(
+            "--save_hidden_states", default=False,
+            action=argparse.BooleanOptionalAction,
+            help="Extract and save hidden states to PKL. Off by default: they are "
+                 "rebuildable from the token IDs in the JSONL. Enable for p_ik or "
+                 "any probing work that needs embeddings in the same run.")
+        parser.add_argument(
+            "--embedding_positions", type=str,
+            default='first_answer,last_prompt,last_token',
+            help="Comma-separated subset of first_answer,last_prompt,last_token to "
+                 "keep. Ignored unless --save_hidden_states.")
+        parser.add_argument(
+            "--embedding_sequences", type=str, default='all',
+            choices=['all', 'greedy'],
+            help="'all' stores embeddings for the greedy answer and every sampled "
+                 "response; 'greedy' stores only the greedy answer (~11x smaller). "
+                 "Ignored unless --save_hidden_states.")
 
     if 'compute' in stages:
         parser.add_argument('--recompute_accuracy',
@@ -178,6 +310,24 @@ def construct_fewshot_prompt_from_indices(dataset, example_indices, brief, brief
 
         prompt = prompt + make_prompt(context, question, answer, brief, brief_always)
 
+    return prompt
+
+
+def construct_cot_fewshot_prompt(brief, make_prompt, n_shot=None):
+    """Few-shot prompt whose exemplars demonstrate reasoning, not bare answers.
+
+    Deliberately does NOT read the dataset: answerable_math's answers are bare
+    numbers, and demonstrations override instructions — showing 'Answer: 9' four
+    times teaches the model to skip the derivation no matter what the brief says.
+    """
+    exemplars = COT_FEWSHOT_EXEMPLARS
+    if n_shot is not None:
+        exemplars = exemplars[:max(0, n_shot)]
+    # brief once at the top; brief_always=False stops make_prompt repeating it
+    # in front of every exemplar.
+    prompt = brief
+    for question, worked_solution in exemplars:
+        prompt += make_prompt(None, question, worked_solution, brief, False)
     return prompt
 
 
@@ -279,10 +429,20 @@ def get_reference(example):
 
 def init_model(args):
     mn = args.model_name
-    if 'llama' in mn.lower() or 'falcon' in mn or 'mistral' in mn.lower() or 'qwen' in mn.lower() or 'gemma' in mn.lower():
+    # Under --reasoning the default stop set would cut the derivation at the
+    # first newline, so swap in the CoT set.
+    stops = COT_STOP_SEQUENCES if getattr(args, 'reasoning', False) else 'default'
+    if ('llama' in mn.lower() or 'falcon' in mn or 'mistral' in mn.lower() or 'qwen' in mn.lower()
+            or 'gemma' in mn.lower() or 'pixtral' in mn.lower()):
+        if getattr(args, 'reasoning', False) and args.model_max_new_tokens < 128:
+            logging.warning(
+                'reasoning=True but model_max_new_tokens=%d. Chain-of-thought '
+                'needs ~256; derivations will be truncated mid-way.',
+                args.model_max_new_tokens)
         model = HuggingfaceModel(
-            mn, stop_sequences='default',
-            max_new_tokens=args.model_max_new_tokens)
+            mn, stop_sequences=stops,
+            max_new_tokens=args.model_max_new_tokens,
+            enable_thinking=getattr(args, 'enable_thinking', False))
     else:
         raise ValueError(f'Unknown model_name `{mn}`.')
     return model
@@ -330,6 +490,22 @@ def get_metric(metric):
                 predictions=[prediction],
                 references=[get_reference(example)])
             return 1.0 if (results['f1'] >= 50.0) else 0.0
+
+    elif metric == 'math':
+        # Exact match on the normalised final answer.
+        #
+        # SQuAD F1 over the whole response is actively wrong for chain-of-thought:
+        # scored against a reference of "9", a correct 200-token derivation earns
+        # almost no token overlap, so measured accuracy would FALL as true
+        # accuracy rose. Compare only the extracted final answer.
+        def metric(response, example, *args, **kwargs):
+            reference = get_reference(example)
+            golds = reference['answers']['text']
+            pred = normalize_numeric_answer(extract_final_answer(response))
+            if not pred:
+                return 0.0
+            return 1.0 if any(
+                pred == normalize_numeric_answer(g) for g in golds) else 0.0
 
     # Reuses the globally active model for these.
     elif metric == 'llm':
