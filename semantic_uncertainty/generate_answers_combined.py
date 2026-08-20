@@ -315,6 +315,20 @@ def main(args):
     random.seed(args.random_seed)
     np.random.seed(args.random_seed)
 
+    # RNG used to draw the few-shot and p_true exemplars, which are excluded
+    # from the evaluation pool. Normally these come off the global `random`
+    # stream, but p_true's draw happens AFTER init_model -- so anything the
+    # model load consumes from that stream shifts which train rows get excluded.
+    # That is harmless for a single run, and fatal for --selection_manifest: a
+    # pinned id could resolve on one machine and be missing on another. When a
+    # manifest is in play, isolate those draws so the excluded set is identical
+    # everywhere. Without a manifest the global stream is used exactly as before,
+    # so existing datasets and completed runs are unaffected.
+    exemplar_rng = (
+        random.Random(args.random_seed)
+        if getattr(args, 'selection_manifest', None) else random
+    )
+
     scratch_dir = os.getenv('SCRATCH_DIR', '/data/kalashkala')
     if not os.path.exists(f"{scratch_dir}/semantic_uncertainty_data/uncertainty"):
         os.makedirs(f"{scratch_dir}/semantic_uncertainty_data/uncertainty")
@@ -362,7 +376,7 @@ def main(args):
             f'Not enough answerable examples ({len(prompt_answerable_indices)}) '
             f'to sample num_few_shot={args.num_few_shot} from {prompt_dataset_name}.')
 
-    prompt_indices = random.sample(prompt_answerable_indices, args.num_few_shot)
+    prompt_indices = exemplar_rng.sample(prompt_answerable_indices, args.num_few_shot)
     experiment_details['prompt_dataset'] = prompt_dataset_name
     experiment_details['prompt_indices'] = prompt_indices
 
@@ -404,7 +418,7 @@ def main(args):
                 f'{len(remaining_prompt_answerable)} available, '
                 f'{args.p_true_num_fewshot} requested.')
 
-        p_true_indices = random.sample(remaining_prompt_answerable, args.p_true_num_fewshot)
+        p_true_indices = exemplar_rng.sample(remaining_prompt_answerable, args.p_true_num_fewshot)
         if prompt_from_target_train:
             excluded_target_train_answerable_indices.update(p_true_indices)
 
@@ -457,7 +471,69 @@ def main(args):
             len(combined_examples),
         )
 
-    selected_indices = random.sample(range(len(combined_examples)), num_selected)
+    # --- Row selection ------------------------------------------------------
+    # Default path: sample by seeded RNG. Note this is only reproducible across
+    # machines if EVERY earlier consumer of the `random` module matched too
+    # (num_few_shot at :365, p_true at :407, and anything init_model touches at
+    # :394) -- which is too fragile to rely on when the same rows must be
+    # evaluated on several servers.
+    #
+    # --selection_manifest makes the row set explicit instead of derived:
+    #   * file absent -> sample as usual, then WRITE the chosen ids to it
+    #   * file present -> SELECT BY ID from it, ignoring the RNG entirely
+    # Ids are md5 hashes of the question, so they are stable across machines and
+    # independent of pool ordering. Generate once, commit, and every server runs
+    # exactly the same rows by construction rather than by coincidence.
+    manifest_path = getattr(args, 'selection_manifest', None)
+
+    if manifest_path and os.path.exists(manifest_path):
+        with open(manifest_path, encoding='utf-8') as fh:
+            manifest = json.load(fh)
+        wanted_ids = manifest['ids']
+
+        id_to_index = {}
+        for idx, entry in enumerate(combined_examples):
+            # First occurrence wins, mirroring _remove_duplicate_questions.
+            id_to_index.setdefault(str(entry['example']['id']), idx)
+
+        missing = [i for i in wanted_ids if i not in id_to_index]
+        if missing:
+            raise ValueError(
+                f'selection_manifest {manifest_path} lists {len(missing)} id(s) '
+                f'absent from the {args.dataset} pool of {len(combined_examples)} '
+                f'(first missing: {missing[0]}). The dataset on this machine does '
+                'not match the one the manifest was built from.'
+            )
+
+        selected_indices = [id_to_index[i] for i in wanted_ids]
+        num_selected = len(selected_indices)
+        logging.info(
+            'Row selection from manifest %s: %d rows (RNG not used).',
+            manifest_path, num_selected,
+        )
+    else:
+        selected_indices = random.sample(range(len(combined_examples)), num_selected)
+
+        if manifest_path:
+            os.makedirs(os.path.dirname(os.path.abspath(manifest_path)), exist_ok=True)
+            manifest = {
+                'dataset': args.dataset,
+                'random_seed': args.random_seed,
+                'num_samples': args.num_samples,
+                'num_few_shot': args.num_few_shot,
+                'compute_p_true': bool(args.compute_p_true),
+                'answerable_only': bool(args.answerable_only),
+                'pool_size': len(combined_examples),
+                'ids': [str(combined_examples[i]['example']['id'])
+                        for i in selected_indices],
+            }
+            with open(manifest_path, 'w', encoding='utf-8') as fh:
+                json.dump(manifest, fh, indent=2)
+            logging.info(
+                'Wrote selection manifest with %d ids to %s',
+                len(manifest['ids']), manifest_path,
+            )
+
     experiment_details['combined'] = {
         'indices': selected_indices,
         'num_total_examples': len(combined_examples),
@@ -724,6 +800,12 @@ if __name__ == '__main__':
     parser = utils.get_parser()
     parser.add_argument('--resume_dir', type=str, default=None,
                         help='Path to a previous incomplete run directory to resume from.')
+    parser.add_argument('--selection_manifest', type=str, default=None,
+                        help='JSON file pinning which rows to evaluate, by example id. '
+                             'If the file does not exist it is written from this run\'s '
+                             'sampled selection; if it does exist, those exact rows are '
+                             'used and the RNG is bypassed. Use it to guarantee several '
+                             'machines evaluate an identical row set.')
     args, unknown = parser.parse_known_args()
     logging.info('Starting new run with args: %s', args)
 
