@@ -64,13 +64,51 @@ utils.setup_logger()
 # Example command Llama + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name meta-llama/Llama-3.1-8B-Instruct --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_llama_answerable_math_combined.log 2>&1 &
 # Example command mistral + answerable_math: nohup conda run --no-capture-output -n semantic_uncertainty env HF_HOME=/data/.cache/huggingface PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python generate_answers_combined.py --model_name mistralai/Mistral-7B-Instruct-v0.3 --dataset answerable_math --model_max_new_tokens 15 --num_generations 10 --num_samples 100 --generation_batch_size 64 --compute_uncertainties > uncertainty_run_mistral_answerable_math_combined.log 2>&1 &
 
-def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
+ALL_POSITIONS = ('first_answer', 'last_prompt', 'last_token')
+
+
+def _link_or_copy(src_name, dst_name):
+    """Point dst_name at src_name inside the run dir, without duplicating bytes.
+
+    Falls back to a real copy on filesystems that reject hard links, so the
+    caller always ends up with a readable dst_name either way.
+    """
+    out_dir = os.environ.get('SU_LOCAL_RUN_DIR', '.')
+    src = os.path.join(out_dir, src_name)
+    dst = os.path.join(out_dir, dst_name)
+    if os.path.exists(dst):
+        os.remove(dst)
+    try:
+        os.link(src, dst)
+        logging.info('Hard-linked %s -> %s (no extra disk use)', dst_name, src_name)
+    except OSError as exc:
+        logging.warning('Hard link failed (%s); falling back to a copy.', exc)
+        shutil.copyfile(src, dst)
+
+
+def _filter_positions(emb, positions):
+    """Keep only the requested positions in an embedding dict."""
+    if not isinstance(emb, dict) or positions is None:
+        return emb
+    return {k: v for k, v in emb.items() if k in positions}
+
+
+def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8,
+                                       positions=None, sequences='all'):
     """Read JSONL (with token IDs), extract embeddings in batches, return full generations dict.
 
     Each JSONL record stores 'generated_ids' (list[int]) instead of float embedding
     tensors.  This function reconstructs embeddings via a single forward pass per
     batch and returns a dict compatible with the downstream PKL format.
+
+    positions: iterable subset of ALL_POSITIONS to retain (None = all).
+    sequences: 'all' extracts the greedy answer and every sampled response;
+               'greedy' extracts only the greedy answer, which is ~11x cheaper
+               in both compute and storage. Sampled responses then carry
+               resp[2] = None rather than an embedding dict.
     """
+    positions = tuple(positions) if positions else None
+    greedy_only = (sequences == 'greedy')
     records = {}
     with open(jsonl_path) as f:
         for line in f:
@@ -105,6 +143,8 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
             flat.append((eid, -1, None))  # old format — embedding already present
 
         for j, resp in enumerate(rec.get('responses', [])):
+            if greedy_only:
+                continue  # sampled responses are not extracted at all
             gen_ids = resp[2] if (isinstance(resp, (list, tuple)) and len(resp) > 2
                                   and isinstance(resp[2], list)
                                   and (not resp[2] or isinstance(resp[2][0], int))) else None
@@ -164,7 +204,7 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
         mla = dict(rec.get('most_likely_answer', {}))
         if (eid, -1) in emb_map:
             mla.pop('generated_ids', None)
-            mla['embedding'] = emb_map[(eid, -1)]
+            mla['embedding'] = _filter_positions(emb_map[(eid, -1)], positions)
         elif 'generated_ids' in mla:
             # Sample has generated_ids but no extracted embedding — extraction incomplete
             missing_embeddings.append((eid, -1))
@@ -176,8 +216,11 @@ def _extract_embeddings_from_token_ids(model, jsonl_path, bsz=8):
         new_responses = []
         for j, resp in enumerate(rec.get('responses', [])):
             resp = list(resp)
-            if (eid, j) in emb_map:
-                resp[2] = emb_map[(eid, j)]  # replace generated_ids with embedding dict
+            if greedy_only:
+                # Deliberately not extracted — drop the token IDs, store nothing.
+                resp[2] = None
+            elif (eid, j) in emb_map:
+                resp[2] = _filter_positions(emb_map[(eid, j)], positions)
             elif isinstance(resp[2], list) and (not resp[2] or isinstance(resp[2][0], int)):
                 # Sample has generated_ids but no extracted embedding — extraction incomplete
                 missing_embeddings.append((eid, j))
@@ -328,10 +371,22 @@ def main(args):
         excluded_target_train_answerable_indices.update(prompt_indices)
 
     make_prompt = utils.get_make_prompt(args)
+    if args.reasoning and args.brief_prompt == 'default':
+        # Silently leaving brief_prompt='default' under --reasoning would tell
+        # the model to answer "as briefly as possible" while we ask it to reason.
+        logging.info("reasoning=True: switching brief_prompt 'default' -> 'cot'.")
+        args.brief_prompt = 'cot'
     BRIEF = utils.BRIEF_PROMPTS[args.brief_prompt]
     brief_arg = args.brief_always if args.enable_brief else True
-    prompt = utils.construct_fewshot_prompt_from_indices(
-        prompt_dataset, prompt_indices, BRIEF, brief_arg, make_prompt)
+    if args.reasoning:
+        prompt = utils.construct_cot_fewshot_prompt(
+            BRIEF, make_prompt, n_shot=args.num_few_shot)
+        logging.info('Using %d hand-written chain-of-thought exemplars '
+                     '(dataset answers are bare numbers and cannot demonstrate reasoning).',
+                     min(args.num_few_shot, len(utils.COT_FEWSHOT_EXEMPLARS)))
+    else:
+        prompt = utils.construct_fewshot_prompt_from_indices(
+            prompt_dataset, prompt_indices, BRIEF, brief_arg, make_prompt)
     experiment_details['prompt'] = prompt
     experiment_details['BRIEF'] = BRIEF
     logging.info('Prompt is: %s', prompt)
@@ -479,6 +534,7 @@ def main(args):
             # Build per-question metadata and prompts.
             batch_meta = []
             local_prompts = []
+            local_images = []
             for wrapped_example in batch_wrapped:
                 example = wrapped_example['example']
                 source_split = wrapped_example['source_split']
@@ -494,10 +550,20 @@ def main(args):
                     'source_index': source_index,
                     'original_id': example['id'],
                 }
+                # The stored record keeps only get_reference(example), which
+                # drops every extra example key. Image-dataset metadata must
+                # therefore be written in explicitly, or re-scoring under a
+                # different ground-truth rule (or an LLM judge) would mean
+                # regenerating everything.
+                for extra_key in ('image_path', 'all_answers', 'answer_type',
+                                  'consensus_support', 'image_id', 'question_id'):
+                    if extra_key in example:
+                        generations[example_id][extra_key] = example[extra_key]
 
                 current_input = make_prompt(
                     context, question, None, BRIEF, args.brief_always and args.enable_brief)
                 local_prompts.append(prompt + current_input)
+                local_images.append(example.get('image_path'))
                 logging.info('Current input: '.ljust(15) + current_input)
 
                 batch_meta.append({
@@ -515,11 +581,14 @@ def main(args):
             # Token IDs are stored instead of hidden-state embeddings to keep the
             # JSONL tiny; embeddings are extracted in a batched forward pass after
             # the generation loop via _extract_embeddings_from_token_ids().
+            batch_images = local_images if any(local_images) else None
             greedy_results = model.predict_batch_questions(
-                local_prompts, temperature=0.0, do_sample=False, return_token_ids=True)
+                local_prompts, temperature=0.0, do_sample=False, return_token_ids=True,
+                images=batch_images)
             sampled_results = model.predict_batch_questions(
                 local_prompts, temperature=1.0, do_sample=True,
-                num_return_sequences=args.num_generations, return_token_ids=True)
+                num_return_sequences=args.num_generations, return_token_ids=True,
+                images=batch_images)
 
             it_base = batch_start + 1
             for i, meta in enumerate(batch_meta):
@@ -554,6 +623,14 @@ def main(args):
                     'generated_ids': greedy_token_info.get('generated_ids', []),
                     'accuracy': acc,
                 }
+                if args.reasoning:
+                    # Keep the full derivation in 'response' (it is what the
+                    # hidden states correspond to) and store the extracted answer
+                    # separately for scoring and entailment clustering.
+                    most_likely_answer_dict['final_answer'] = utils.extract_final_answer(
+                        predicted_answer)
+                    logging.info('final answer: '.ljust(15)
+                                 + most_likely_answer_dict['final_answer'])
                 generations[example_id].update({
                     'prompt_token_ids': greedy_token_info.get('prompt_ids', []),
                     'most_likely_answer': most_likely_answer_dict,
@@ -566,7 +643,13 @@ def main(args):
                              if (correct_answer and args.compute_accuracy_at_all_temps) else 0.0)
                     logging.info('high-t prediction '.ljust(15) + str(sample_idx) + ' : ' + pred_ans)
                     gen_ids = tok_info.get('generated_ids', []) if tok_info else []
-                    full_responses.append((pred_ans, lls, gen_ids, acc_s))
+                    if args.reasoning:
+                        # Appended as a 5th slot: every existing consumer indexes
+                        # r[0..3], so the extra element is backward compatible.
+                        full_responses.append((pred_ans, lls, gen_ids, acc_s,
+                                               utils.extract_final_answer(pred_ans)))
+                    else:
+                        full_responses.append((pred_ans, lls, gen_ids, acc_s))
 
                 generations[example_id]['responses'] = full_responses
 
@@ -594,17 +677,33 @@ def main(args):
     # Extract embeddings from stored token IDs and build the generations dict.
     # The JSONL stores token IDs instead of float tensors (much smaller files);
     # embeddings are computed here in a single batched forward pass per batch.
-    logging.info('Generation loop complete. Extracting embeddings from token IDs…')
-    emb_bsz = 128  # Large batch (no KV cache growth), with auto-retry to smaller sizes on OOM
-    generations = _extract_embeddings_from_token_ids(model, jsonl_path, bsz=emb_bsz)
-    utils.save(generations, 'combined_generations.pkl')
+    if args.save_hidden_states:
+        logging.info('Generation loop complete. Extracting embeddings from token IDs…')
+        emb_bsz = 128  # Large batch (no KV cache growth), with auto-retry to smaller sizes on OOM
+        positions = [p.strip() for p in args.embedding_positions.split(',') if p.strip()]
+        bad = [p for p in positions if p not in ALL_POSITIONS]
+        if bad:
+            raise ValueError(f'Unknown --embedding_positions {bad}; valid: {ALL_POSITIONS}')
+        logging.info('Storing hidden states: positions=%s sequences=%s',
+                     positions, args.embedding_sequences)
+        generations = _extract_embeddings_from_token_ids(
+            model, jsonl_path, bsz=emb_bsz,
+            positions=positions, sequences=args.embedding_sequences)
+        utils.save(generations, 'combined_generations.pkl')
 
-    # Save validation-compatible copies so the existing uncertainty computation
-    # script can run unchanged.
-    # NOTE: Do NOT copy the raw JSONL here — it has 'generated_ids' (token IDs),
-    # not 'embedding' dicts. compute_uncertainty_measures prefers JSONL over PKL,
-    # so we let it fall back to the PKL below which has proper embeddings.
-    utils.save(generations, 'validation_generations.pkl')
+        # compute_uncertainty_measures.py looks for validation_generations.*.
+        # Link rather than pickling the identical object a second time: the two
+        # files were previously byte-identical duplicates, which is what made
+        # these runs balloon (~37 G of pure duplication across 15 runs).
+        _link_or_copy('combined_generations.pkl', 'validation_generations.pkl')
+    else:
+        # Hidden states are a recomputable cache: combined_generations.jsonl
+        # retains prompt_token_ids + generated_ids, so extract_hidden_states.py
+        # can rebuild the PKLs by teacher forcing whenever they are needed.
+        logging.info(
+            'Generation loop complete. Skipping hidden-state extraction '
+            '(--save_hidden_states is off). Rebuild later with '
+            'extract_hidden_states.py --jsonl_path %s', jsonl_path)
 
     accuracy = float(np.mean(accuracies)) if accuracies else float('nan')
     print(f'Overall combined split accuracy: {accuracy}')
