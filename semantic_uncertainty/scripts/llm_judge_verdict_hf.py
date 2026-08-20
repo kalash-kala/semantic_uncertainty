@@ -40,7 +40,26 @@ FILE_LIST = [
     # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_mistral_gsm8k_combined.csv",
     # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_qwen_gsm8k_combined.csv",
     # "/home/kalashkala/Datasets/Semantic-Uncertainty/gsm8k/uncertainty_run_gemma_gsm8k_combined.csv",
-    "/home/kalashkala/semantic_uncertainty/semantic_uncertainty/scripts/uncertainty_run_llama_sciq_combined_empty_verdict.csv"
+    # "/home/kalashkala/semantic_uncertainty/semantic_uncertainty/scripts/uncertainty_run_llama_sciq_combined_empty_verdict.csv"
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/triviaqa/uncertainty_run_gemma_triviaqa_combined_50K.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/sciq/uncertainty_run_gemma_sciq_combined_full.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_gemma_answerable_math_combined.csv"
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/triviaqa/uncertainty_run_qwen3_14b_triviaqa_combined_50K.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/triviaqa/uncertainty_run_gemma3_27b_triviaqa_combined_50K.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_gemma3_27b_answerable_math_combined.csv",
+
+    # answerable_math (chain-of-thought runs)
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_qwen25_7b_answerable_math_cot_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_qwen3_14b_answerable_math_cot_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_gemma3_12b_answerable_math_cot_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_gemma3_27b_answerable_math_cot_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_llama31_8b_answerable_math_cot_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/answerable_math/uncertainty_run_mistral7b_answerable_math_cot_combined.csv",
+
+    # advqa
+    "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_qwen25vl_advqa_combined.csv",
+    "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_gemma3_12b_advqa_combined.csv",
+    "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_pixtral12b_advqa_combined.csv",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,6 +140,47 @@ def get_judge_prompt(dataset: str):
             "Respond with exactly one word: yes or no."
         )
 
+    elif dataset == "answerable_math":
+        system = (
+            "You are an expert math answer evaluator.\n"
+            "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
+            "The proposed answer may be just a final numeric answer, or may include a chain-of-thought "
+            "derivation ending in the final answer — in either case, judge only whether the final numeric "
+            "answer is equivalent to any of the valid answers.\n"
+            "Focus on the value being expressed — formatting differences such as 5.0 vs 5, $100 vs 100, "
+            "or 1,000 vs 1000, 4 vs four are the same.\n"
+            "There may be multiple valid answers listed — the proposed answer is correct if it equals ANY one of them.\n"
+            "Respond with exactly one word: yes or no."
+        )
+        user = (
+            "Question: {question}\n"
+            "Valid answer(s) (match ANY one):\n{ground_truth}\n"
+            "Proposed answer: {prediction}\n\n"
+            "In the context of the question asked, is the final numeric answer equivalent to at least one of the valid answers? "
+            "Respond with exactly one word: yes or no."
+        )
+
+    elif dataset == "advqa":
+        system = (
+            "You are an expert visual question answering (VQA) evaluator.\n"
+            "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
+            "The proposed answer is correct if it conveys the same meaning as any of the valid answers — "
+            "these are short, free-form answers given by human annotators looking at an image, so answers "
+            "are often a single word or a short phrase.\n"
+            "Focus on the meaning being conveyed, not surface form — synonyms, paraphrases, singular/plural, "
+            "and minor wording differences are acceptable. Numeric answers should be compared by value "
+            "(5.0 vs 5, 4 vs four are the same).\n"
+            "There may be multiple valid answers listed — the proposed answer is correct if it matches ANY one of them.\n"
+            "Respond with exactly one word: yes or no."
+        )
+        user = (
+            "Question about an image: {question}\n"
+            "Valid answer(s) (match ANY one):\n{ground_truth}\n"
+            "Proposed answer: {prediction}\n\n"
+            "In the context of the question asked, does the proposed answer convey the same meaning as at least one of the valid answers? "
+            "Respond with exactly one word: yes or no."
+        )
+
     else:
         system = (
             "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
@@ -151,6 +211,12 @@ def detect_dataset(filename: str) -> str:
         return "svamp"
     elif "triviaqa" in name:
         return "triviaqa"
+    elif "advqa" in name:
+        return "advqa"
+    elif "answerable_math" in name:
+        return "answerable_math"
+    elif "gsm8k" in name:
+        return "gsm8k"
     return "generic"
 
 
@@ -174,7 +240,7 @@ def normalize_math(x: str) -> str:
 
 
 def normalize_answer(x: str, dataset: str) -> str:
-    if dataset == "svamp":
+    if dataset in ("svamp", "gsm8k", "answerable_math"):
         return normalize_math(x)
     return normalize_text(x)
 
@@ -219,10 +285,17 @@ def build_chat_prompts(rows: list[dict], tokenizer, dataset: str) -> list[str]:
         else:
             gt_formatted = "\n".join(f"  {i + 1}. {ans}" for i, ans in enumerate(gt_list))
 
+        # Reasoning/CoT runs carry the full derivation in low_t_generation but
+        # store the extracted final answer separately — judge that, not the
+        # derivation, so the judge isn't asked to parse chain-of-thought text.
+        final_answer = row.get("final_answer")
+        has_final_answer = final_answer is not None and str(final_answer).strip() not in ("", "nan")
+        prediction_raw = final_answer if has_final_answer else row["low_t_generation"]
+
         user_text = user_template.format(
             question=str(row["question"]).strip(),
             ground_truth=gt_formatted,
-            prediction=normalize_answer(row["low_t_generation"], dataset),
+            prediction=normalize_answer(prediction_raw, dataset),
         )
 
         messages = [

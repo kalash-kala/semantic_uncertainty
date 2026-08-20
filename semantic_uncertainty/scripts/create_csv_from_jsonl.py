@@ -147,6 +147,19 @@ Examples:
         else:
             print(f"Found {len(all_ids)} records")
 
+        # Reasoning runs (--reasoning) store the full chain-of-thought derivation
+        # in most_likely_answer['response'], with the extracted answer used for
+        # scoring kept separately in most_likely_answer['final_answer']
+        # (generate_answers_combined.py:626-632). Detect this once for the whole
+        # run so 'low_t_generation'/'n_generations' keep meaning "what was
+        # scored" for non-reasoning runs, unchanged from before.
+        is_reasoning = any(
+            'final_answer' in gen_data.get('most_likely_answer', {})
+            for gen_data in combined_gen.values())
+        if is_reasoning and args.verbose:
+            print("[✓] Detected reasoning run (final_answer present) — "
+                  "adding final_answer / n_generations_final_answers columns")
+
         # Prepare CSV data
         rows = []
         for id_key in sorted(all_ids):
@@ -174,6 +187,13 @@ Examples:
                 'question': question,
                 'p_true': p_true,
             }
+            if is_reasoning:
+                # Sampled responses get a 5th tuple element (pred_ans, lls,
+                # gen_ids, acc_s, final_answer) only under --reasoning
+                # (generate_answers_combined.py:645-650).
+                row['final_answer'] = most_likely.get('final_answer', '')
+                row['n_generations_final_answers'] = [
+                    resp[4] if len(resp) > 4 else '' for resp in gen_data.get('responses', [])]
             rows.append(row)
 
         # Write CSV
@@ -185,6 +205,8 @@ Examples:
 
         fieldnames = ['id', 'ground_truth', 'low_t_generation', 'accuracy', 'n_generations',
                       'cluster_assignment_entropy', 'question', 'p_true']
+        if is_reasoning:
+            fieldnames += ['final_answer', 'n_generations_final_answers']
 
         with open(output_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
