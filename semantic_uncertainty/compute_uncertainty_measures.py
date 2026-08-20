@@ -159,13 +159,31 @@ def main(args):
         result_dict = pickle.load(infile)
     result_dict['semantic_ids'] = []
 
-    validation_generations_pickle = restore('validation_generations.pkl')
-    try:
-        with open(restore('validation_generations.jsonl').name, 'r') as infile:
-            validation_generations = {k: v for line in infile for k, v in json.loads(line).items()}
-    except FileNotFoundError:
-        with open(validation_generations_pickle.name, 'rb') as infile:
-            validation_generations = pickle.load(infile)
+    # Preference order: validation JSONL (Era A) -> validation PKL (runs that
+    # saved hidden states) -> combined JSONL (runs generated with
+    # --no-save_hidden_states, where no PKL is written at all).
+    validation_generations = None
+    for path, mode in ((restore('validation_generations.jsonl').name, 'jsonl'),
+                       (restore('validation_generations.pkl').name, 'pkl'),
+                       (restore('combined_generations.jsonl').name, 'jsonl')):
+        try:
+            if mode == 'jsonl':
+                with open(path, 'r') as infile:
+                    validation_generations = {
+                        k: v for line in infile if line.strip()
+                        for k, v in json.loads(line).items()}
+            else:
+                with open(path, 'rb') as infile:
+                    validation_generations = pickle.load(infile)
+        except FileNotFoundError:
+            continue
+        logging.info('Loaded generations from %s', path)
+        break
+    if validation_generations is None:
+        raise FileNotFoundError(
+            f'No generations found in {out_dir}: expected one of '
+            'validation_generations.jsonl, validation_generations.pkl or '
+            'combined_generations.jsonl')
 
     entropies = defaultdict(list)
     validation_embeddings, validation_is_true, validation_answerable = [], [], []
@@ -185,12 +203,24 @@ def main(args):
             full_responses = example["responses"]
             most_likely_answer = example['most_likely_answer']
 
+            # Under --reasoning, cluster on the extracted final answer rather than
+            # the full derivation. DeBERTa over derivations clusters by phrasing,
+            # not by answer: two runs that both conclude "72" by different routes
+            # land in different clusters, inflating semantic entropy on exactly
+            # the questions the model answers most consistently.
+            def response_text(fr):
+                if getattr(args, 'reasoning', False):
+                    if len(fr) > 4 and fr[4]:
+                        return fr[4]
+                    return utils.extract_final_answer(fr[0])
+                return fr[0]
+
             if not args.use_all_generations:
                 if args.use_num_generations == -1:
                     raise ValueError
-                responses = [fr[0] for fr in full_responses[:args.use_num_generations]]
+                responses = [response_text(fr) for fr in full_responses[:args.use_num_generations]]
             else:
-                responses = [fr[0] for fr in full_responses]
+                responses = [response_text(fr) for fr in full_responses]
 
             if args.recompute_accuracy:
                 logging.info('Recomputing accuracy!')
@@ -205,10 +235,14 @@ def main(args):
                 validation_is_true.append(most_likely_answer['accuracy'])
 
             validation_answerable.append(is_answerable(example))
-            # Extract 'last_token' embedding from dict, or use whole dict/tensor if not a dict
-            embedding = most_likely_answer['embedding']
+            # Embeddings are optional: runs generated with --no-save_hidden_states
+            # have no 'embedding' key at all. Only p_ik actually consumes these,
+            # and it is gated below, so a None here is harmless for every other
+            # measure. Do NOT turn this back into most_likely_answer['embedding'] —
+            # bare bracket access KeyErrors on embedding-free runs.
+            embedding = most_likely_answer.get('embedding')
             if isinstance(embedding, dict):
-                embedding = embedding.get('last_token', embedding.get('last_token'))  # Use last_token embedding
+                embedding = embedding.get('last_token')  # Use last_token embedding
             validation_embeddings.append(embedding)
             logging.info('validation_is_true: %f', validation_is_true[-1])
 
@@ -305,14 +339,24 @@ def main(args):
         result_dict['uncertainty_measures'].update(entropies)
 
     if args.compute_p_ik or args.compute_p_ik_answerable:
+        # p_ik is the only consumer of embeddings. Fail loudly and early here
+        # rather than deep inside the classifier, since the cause is a run-level
+        # choice: the run was generated with --no-save_hidden_states.
+        if all(e is None for e in validation_embeddings):
+            raise ValueError(
+                'p_ik was requested but this run has no hidden states. Rebuild '
+                'them from the token IDs first:\n'
+                '  python extract_hidden_states.py --jsonl_path '
+                '<run>/combined_generations.jsonl --model_name <model>\n'
+                'or re-generate with --save_hidden_states.')
         # Assemble training data for embedding classification.
         train_is_true, train_embeddings, train_answerable = [], [], []
         for tid in train_generations:
             most_likely_answer = train_generations[tid]['most_likely_answer']
-            # Extract 'last_token' embedding from dict, or use whole dict/tensor if not a dict
-            embedding = most_likely_answer['embedding']
+            # Extract 'last_token' embedding from dict (see the note above on .get).
+            embedding = most_likely_answer.get('embedding')
             if isinstance(embedding, dict):
-                embedding = embedding.get('last_token', embedding.get('last_token'))  # Use last_token embedding
+                embedding = embedding.get('last_token')  # Use last_token embedding
             train_embeddings.append(embedding)
             train_is_true.append(most_likely_answer['accuracy'])
             train_answerable.append(is_answerable(train_generations[tid]))
