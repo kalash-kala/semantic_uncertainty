@@ -330,8 +330,7 @@ def main(args):
     )
 
     scratch_dir = os.getenv('SCRATCH_DIR', '/data/kalashkala')
-    if not os.path.exists(f"{scratch_dir}/semantic_uncertainty_data/uncertainty"):
-        os.makedirs(f"{scratch_dir}/semantic_uncertainty_data/uncertainty")
+    os.makedirs(f"{scratch_dir}/semantic_uncertainty_data/uncertainty", exist_ok=True)
 
     safe_model_name = args.model_name.replace('/', '__').replace(' ', '_')
     run_stamp = time.strftime('%Y%m%d_%H%M%S')
