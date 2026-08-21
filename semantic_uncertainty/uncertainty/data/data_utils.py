@@ -389,8 +389,8 @@ def load_ds(dataset_name, seed, add_options=None):
         # Both splits carry full annotations (unlike AdVQA, where only val
         # has them), and the dataset is small (~14k total), so we pool both
         # splits into one set rather than treating val as the sole eval pool.
-        root = "/data/kalashkala/vqa_data/okvqa"
-        img_root = "/data/kalashkala/vqa_data/coco"
+        root = os.environ.get("OKVQA_DATA_ROOT", "/data/kalashkala/vqa_data/okvqa")
+        img_root = os.environ.get("OKVQA_IMG_ROOT", "/data/kalashkala/vqa_data/coco")
 
         rows = []
         for split in ["train2014", "val2014"]:
