@@ -98,6 +98,7 @@ env HF_HOME="$HF_HOME" \
     --no-enable_thinking \
     --no-reasoning \
     --no-save_hidden_states \
+    --no-analyze_run \
     $COMPUTE_UNCERTAINTIES \
     $RESUME_ARG
 

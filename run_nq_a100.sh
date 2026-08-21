@@ -8,6 +8,14 @@
 #
 #   sbatch --export=MODEL_NAME="Qwen/Qwen2.5-7B-Instruct",GENERATION_BATCH_SIZE=64 run_nq_a100.sh
 #
+# Individual model commands (confirmed A100 batch sizes, see submit_nq_all.sh):
+#   sbatch --export=MODEL_NAME="Qwen/Qwen2.5-7B-Instruct",GENERATION_BATCH_SIZE=128 run_nq_a100.sh
+#   sbatch --export=MODEL_NAME="meta-llama/Llama-3.1-8B-Instruct",GENERATION_BATCH_SIZE=128 run_nq_a100.sh
+#   sbatch --export=MODEL_NAME="mistralai/Mistral-7B-Instruct-v0.3",GENERATION_BATCH_SIZE=128 run_nq_a100.sh
+#   sbatch --export=MODEL_NAME="google/gemma-3-12b-it",GENERATION_BATCH_SIZE=32 run_nq_a100.sh
+#   sbatch --export=MODEL_NAME="Qwen/Qwen3-14B",GENERATION_BATCH_SIZE=64 run_nq_a100.sh
+#   sbatch --export=MODEL_NAME="google/gemma-3-27b-it",GENERATION_BATCH_SIZE=16 run_nq_a100.sh
+#
 # If a model does hit the 24h wall, resume it instead of restarting:
 #   sbatch --export=MODEL_NAME="google/gemma-3-27b-it",GENERATION_BATCH_SIZE=16,RESUME_DIR="<run dir>" run_nq_a100.sh
 #
@@ -104,6 +112,7 @@ env HF_HOME="$HF_HOME" \
     --no-enable_thinking \
     --no-reasoning \
     --no-save_hidden_states \
+    --no-analyze_run \
     $COMPUTE_UNCERTAINTIES \
     $RESUME_ARG
 
