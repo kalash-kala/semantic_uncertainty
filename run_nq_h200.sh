@@ -18,9 +18,8 @@
 #SBATCH --qos=h200_qos
 #SBATCH --gres=gpu:h200:1
 #SBATCH --job-name=nq_generate_h200
-#SBATCH --output=/home/sriramg/kalashabhayk/semantic_uncertainty/slurm_logs/logs/%x_%j.out
-#SBATCH --error=/home/sriramg/kalashabhayk/semantic_uncertainty/slurm_logs/errors/%x_%j.err
-#SBATCH --chdir=/home/sriramg/kalashabhayk/semantic_uncertainty
+#SBATCH --output=slurm_logs/logs/%x_%j.out
+#SBATCH --error=slurm_logs/errors/%x_%j.err
 #SBATCH --time=24:00:00
 #SBATCH --mem=200G
 #SBATCH --cpus-per-task=16

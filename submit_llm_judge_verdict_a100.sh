@@ -2,9 +2,8 @@
 #SBATCH --partition=a100
 #SBATCH --gres=gpu:2
 #SBATCH --job-name=llm_judge_verdict_hf_llama70b
-#SBATCH --output=/home/sriramg/kalashabhayk/semantic_uncertainty/slurm_logs/logs/%x_%j.out
-#SBATCH --error=/home/sriramg/kalashabhayk/semantic_uncertainty/slurm_logs/errors/%x_%j.err
-#SBATCH --chdir=/home/sriramg/kalashabhayk/semantic_uncertainty
+#SBATCH --output=slurm_logs/logs/%x_%j.out
+#SBATCH --error=slurm_logs/errors/%x_%j.err
 #SBATCH --time=24:00:00
 #SBATCH --mem=80G
 #SBATCH --cpus-per-task=8
