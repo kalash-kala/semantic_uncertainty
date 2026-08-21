@@ -42,8 +42,10 @@ MODEL_MAX_NEW_TOKENS=${MODEL_MAX_NEW_TOKENS:-15}
 METRIC=${METRIC:-"squad"}
 COMPUTE_UNCERTAINTIES=${COMPUTE_UNCERTAINTIES:-"--compute_uncertainties"}
 RANDOM_SEED=${RANDOM_SEED:-10}
-HF_HOME=${HF_HOME:-"/home/sriramg/kalashabhayk/.cache/huggingface"}
-SCRATCH_DIR=${SCRATCH_DIR:-"/storage/users/sriramg/kalashabhayk"}
+# Both derived from $HOME so this resolves correctly under whichever account
+# runs the job, e.g. $HOME=/home/sriramg/kalashabhayk -> storage/users/sriramg/kalashabhayk
+HF_HOME=${HF_HOME:-"$HOME/.cache/huggingface"}
+SCRATCH_DIR=${SCRATCH_DIR:-"/storage/users${HOME#/home}"}
 RESUME_DIR=${RESUME_DIR:-""}
 SELECTION_MANIFEST=${SELECTION_MANIFEST:-"manifests/nq_50k_seed10.json"}
 
