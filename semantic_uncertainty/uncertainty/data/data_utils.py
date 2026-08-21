@@ -382,6 +382,56 @@ def load_ds(dataset_name, seed, add_options=None):
         train_dataset = rows[:1000]
         validation_dataset = rows[1000:]
 
+    elif dataset_name == "okvqa":
+        # OK-VQA: knowledge-based VQA over COCO train2014+val2014 images.
+        # Unlike AdVQA/VQAv2, answer_type is "other" for 100% of questions
+        # (no yes/no category), so no binary-guessing-floor filter is needed.
+        # Both splits carry full annotations (unlike AdVQA, where only val
+        # has them), and the dataset is small (~14k total), so we pool both
+        # splits into one set rather than treating val as the sole eval pool.
+        root = "/data/kalashkala/vqa_data/okvqa"
+        img_root = "/data/kalashkala/vqa_data/coco"
+
+        rows = []
+        for split in ["train2014", "val2014"]:
+            q_path = f"{root}/OpenEnded_mscoco_{split}_questions.json"
+            a_path = f"{root}/mscoco_{split}_annotations.json"
+            with open(q_path, encoding='utf-8') as fh:
+                questions = json.load(fh)['questions']
+            with open(a_path, encoding='utf-8') as fh:
+                annotations = json.load(fh)['annotations']
+            ann_by_qid = {a['question_id']: a for a in annotations}
+
+            for q in questions:
+                ann = ann_by_qid.get(q['question_id'])
+                if ann is None:
+                    continue
+                all_answers = [a['answer'].strip() for a in ann['answers']]
+                counts = Counter(all_answers)
+                consensus, support = counts.most_common(1)[0]
+                rows.append({
+                    'question': q['question'].strip(),
+                    'context': '',
+                    'id': md5hash(f"okvqa-{split}-{q['question_id']}"),
+                    'answers': {'text': [consensus]},
+                    'all_answers': all_answers,
+                    'consensus_support': support,
+                    'answer_type': ann['answer_type'],
+                    'question_type': ann['question_type'],
+                    'image_id': q['image_id'],
+                    'question_id': q['question_id'],
+                    'image_path': f"{img_root}/{split}/COCO_{split}_{q['image_id']:012d}.jpg",
+                })
+
+        rows.sort(key=lambda r: r['id'])
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(rows))
+        rows = [rows[i] for i in perm]
+        # The train slice is unused at --num_few_shot 0 but keeps
+        # _build_eval_pool and split_dataset on their normal path.
+        train_dataset = rows[:1000]
+        validation_dataset = rows[1000:]
+
     else:
         raise ValueError
 
