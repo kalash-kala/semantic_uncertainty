@@ -42,7 +42,7 @@ SCRATCH_DIR="/storage/users/sriramg/kalashabhayk"
 OKVQA_DATA_ROOT="$SCRATCH_DIR/vqa_data/okvqa"
 OKVQA_IMG_ROOT="$SCRATCH_DIR/vqa_data/coco"
 
-MODEL_NAME="mistral-community/pixtral-12b"
+MODEL_NAME="mistral-community/pixtral-12b-240910"
 # Confirmed on this GPU class (79.15 GiB capacity): bs=8 OOM'd during
 # scaled_dot_product_attention (logs/vqav2_pixtral12b.log), bs=4 has run
 # stably since. Reusing that confirmed value here.

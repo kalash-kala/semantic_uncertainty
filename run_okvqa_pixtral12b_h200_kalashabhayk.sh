@@ -46,7 +46,7 @@ SCRATCH_DIR="/storage/users/sriramg/kalashabhayk"
 OKVQA_DATA_ROOT="$SCRATCH_DIR/vqa_data/okvqa"
 OKVQA_IMG_ROOT="$SCRATCH_DIR/vqa_data/coco"
 
-MODEL_NAME="mistral-community/pixtral-12b"
+MODEL_NAME="mistral-community/pixtral-12b-240910"
 # Pixtral wasn't part of the NQ multiplier study (text-only models), so
 # there's no measured H200 factor for it specifically. Applying the same
 # 1.45x used for gemma3-12b as a same-parameter-class proxy on the
