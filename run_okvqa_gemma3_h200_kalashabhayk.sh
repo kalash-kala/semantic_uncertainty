@@ -8,11 +8,13 @@
 # /home/sriramg/kalashabhayk since this script targets one specific
 # account/server.
 #
-# Self-contained: downloads the OK-VQA questions/annotations + COCO
-# train2014/val2014 images (idempotent -- skips anything already present)
-# and pre-warms the HF model cache before generation. --no-analyze_run skips
-# the bootstrap-CI AUROC pass; uncertainty_measures.pkl is written first, so
-# analyze_run can be re-run standalone later without regenerating.
+# Downloads the tiny OK-VQA questions/annotations JSON itself, but expects
+# COCO train2014/val2014 images to already be rsync'd in (the public COCO
+# host was far too slow from this cluster) and the model to already be in
+# the HF cache (download with `hf download <model>` beforehand).
+# --no-analyze_run skips the bootstrap-CI AUROC pass; uncertainty_measures.pkl
+# is written first, so analyze_run can be re-run standalone later without
+# regenerating.
 #
 #   sbatch run_okvqa_gemma3_h200_kalashabhayk.sh
 # ============================================================================
@@ -57,9 +59,12 @@ source ~/miniconda3/etc/profile.d/conda.sh
 conda activate semantic_uncertainty
 
 # ============================================================================
-# Download OK-VQA questions + annotations (idempotent)
+# OK-VQA questions + annotations (idempotent, flock-serialized -- tiny, ~1s
+# each, safe to fetch on every job)
 # ============================================================================
-mkdir -p "$OKVQA_DATA_ROOT"
+mkdir -p "$SCRATCH_DIR/vqa_data" "$OKVQA_DATA_ROOT"
+(
+flock -x 200
 cd "$OKVQA_DATA_ROOT"
 for f in OpenEnded_mscoco_train2014_questions OpenEnded_mscoco_val2014_questions \
          mscoco_train2014_annotations mscoco_val2014_annotations; do
@@ -70,30 +75,32 @@ for f in OpenEnded_mscoco_train2014_questions OpenEnded_mscoco_val2014_questions
     rm -f "${f}.json.zip"
   fi
 done
+) 200>"$SCRATCH_DIR/vqa_data/.download.lock"
 
 # ============================================================================
-# Download COCO train2014 + val2014 images (idempotent, ~20GB total)
-# ============================================================================
-mkdir -p "$OKVQA_IMG_ROOT"
-cd "$OKVQA_IMG_ROOT"
+# COCO images -- NOT downloaded by this script. The public COCO host was
+# far too slow from this cluster (~108KB/s, 33hr ETA for train2014.zip
+# alone), so images are rsync'd in ahead of time from the box that already
+# has them extracted. Fail fast with a clear message if they're missing
+# rather than silently trying (and racing another job) to fetch them.
 for split in train2014 val2014; do
-  if [ ! -d "$split" ]; then
-    echo "Downloading COCO $split ..."
-    curl -fL -o "${split}.zip" "http://images.cocodataset.org/zips/${split}.zip"
-    unzip -q -o "${split}.zip"
-    rm -f "${split}.zip"
+  if [ ! -d "$OKVQA_IMG_ROOT/$split" ]; then
+    echo "ERROR: $OKVQA_IMG_ROOT/$split not found." >&2
+    echo "Expected COCO $split to be rsync'd in ahead of time, e.g.:" >&2
+    echo "  rsync -avP <source>:/data/kalashkala/vqa_data/coco/$split $OKVQA_IMG_ROOT/" >&2
+    exit 1
   fi
 done
 
 cd "$REPO_ROOT"
 
 # ============================================================================
-# Pre-warm the HF model cache
+# HF model cache -- NOT pre-warmed by this script. Download the model
+# yourself ahead of time, e.g.:
+#   hf download $MODEL_NAME
+# generate_answers_combined.py will use whatever's already in HF_HOME's
+# cache; if it's missing it falls back to downloading it inline.
 # ============================================================================
-python -c "
-from huggingface_hub import snapshot_download
-snapshot_download('$MODEL_NAME')
-"
 
 echo "=========================================="
 echo "OK-VQA generation — gemma-3-12b-it — H200"
