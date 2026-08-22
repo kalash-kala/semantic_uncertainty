@@ -62,6 +62,19 @@ FILE_LIST = [
     "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_qwen25vl_advqa_combined.csv",
     "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_gemma3_12b_advqa_combined.csv",
     "/home/kalashkala/Datasets/Semantic-Uncertainty/advqa/uncertainty_run_pixtral12b_advqa_combined.csv",
+
+    # nq
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/nq/uncertainty_run_<model>_nq_combined.csv",
+
+    # okvqa
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/okvqa/uncertainty_run_qwen25vl_okvqa_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/okvqa/uncertainty_run_gemma3_12b_okvqa_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/okvqa/uncertainty_run_pixtral12b_okvqa_combined.csv",
+
+    # vqav2
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/vqav2/uncertainty_run_qwen25vl_vqav2_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/vqav2/uncertainty_run_gemma3_12b_vqav2_combined.csv",
+    # "/home/kalashkala/Datasets/Semantic-Uncertainty/vqav2/uncertainty_run_pixtral12b_vqav2_combined.csv",
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -189,7 +202,10 @@ def get_judge_prompt(dataset: str):
             "Respond with exactly one word: yes or no."
         )
 
-    elif dataset == "advqa":
+    elif dataset in ("advqa", "okvqa", "vqav2"):
+        # okvqa and vqav2 are the same open-ended free-form VQA answer format
+        # as advqa (short annotator answers, often a single word), so they
+        # share the same judge prompt.
         system = (
             "You are an expert visual question answering (VQA) evaluator.\n"
             "IMPORTANT: Evaluate the proposed answer IN THE CONTEXT OF WHAT THE QUESTION ASKS.\n"
@@ -242,6 +258,10 @@ def detect_dataset(filename: str) -> str:
         return "triviaqa"
     elif "advqa" in name:
         return "advqa"
+    elif "okvqa" in name:
+        return "okvqa"
+    elif "vqav2" in name:
+        return "vqav2"
     elif "answerable_math" in name:
         return "answerable_math"
     elif "gsm8k" in name:
