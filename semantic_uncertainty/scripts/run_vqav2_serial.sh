@@ -48,6 +48,6 @@ run_model () {
   echo "=== finished $name $(date) ==="
 }
 
-run_model pixtral12b "mistral-community/pixtral-12b" 8
+run_model pixtral12b "mistral-community/pixtral-12b" 4
 
 echo "ALL DONE $(date)"

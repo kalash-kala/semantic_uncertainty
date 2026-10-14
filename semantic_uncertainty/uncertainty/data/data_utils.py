@@ -341,7 +341,11 @@ def load_ds(dataset_name, seed, add_options=None):
         # (binary answers put a 50% guessing floor under accuracy and cap
         # semantic-entropy clustering at 2 clusters). Ground truth is the
         # official 'multiple_choice_answer' consensus field.
-        root = "/data/kalashkala/vqa_data/vqav2/sampled"
+        # RQ4 P2 extension: VQAV2_DATA_ROOT (unset by default, so the published
+        # 35,000-row pool is untouched) lets a sidecar directory add rows
+        # on top of the original sample without editing it in place --
+        # the same pattern OKVQA_DATA_ROOT already uses below.
+        root = os.environ.get("VQAV2_DATA_ROOT", "/data/kalashkala/vqa_data/vqav2/sampled")
         q_path = f"{root}/sampled_questions.json"
         a_path = f"{root}/sampled_annotations.json"
         img_dir = "/data/kalashkala/vqa_data/coco/val2014"

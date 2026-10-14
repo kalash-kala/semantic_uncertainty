@@ -141,3 +141,17 @@ dmypy.json
 *.jsonl
 *.log
 root/
+# ── migration 2026-10-14 ─────────────────────────────────────────────────────
+# NOTE: gitignore has no trailing comments; a pattern runs to end of line.
+#
+# Generation run outputs and logs. Transferred separately -- the run CSVs that
+# the downstream pipeline actually consumes are committed in
+# hallucination-detection-repro under data/uncertainty_runs{,_dse}/.
+#   semantic_uncertainty/logs                  1.1 GB
+#   semantic_uncertainty/semantic_uncertainty_data  2.1 GB
+#   non_inst_concentration_output              93 MB
+/semantic_uncertainty/logs/
+/semantic_uncertainty/semantic_uncertainty_data
+/non_inst_concentration_output
+__pycache__/
+*.pyc
